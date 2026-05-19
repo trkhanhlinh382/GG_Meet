@@ -142,19 +142,21 @@ export const registerMeetingRealtime = (io: Server): void => {
         return;
       }
 
+
+      let hasAcceptedInvitation = false;
       if (meeting.privacyMode === "private" && userId !== hostUserId) {
         const acceptedInvitation = await InvitationModel.findOne({
           meetingId: meeting.id,
           userId,
           status: "accepted",
         });
-
         if (!acceptedInvitation) {
           socket.emit("meeting:join-denied", {
             reason: "Private meeting: only invited users with accepted invitation can join",
           });
           return;
         }
+        hasAcceptedInvitation = true;
       }
 
       if (state.locked && !isHostLike(state, userId)) {
@@ -173,7 +175,13 @@ export const registerMeetingRealtime = (io: Server): void => {
       const isHost = userId === state.hostUserId;
       const isCoHost = state.coHostUserIds.has(userId);
 
-      if (meeting.waitingRoomEnabled && !isHost && !isCoHost) {
+      // Nếu đã accept invitation thì cho vào thẳng meeting, không vào phòng chờ
+      if (
+        meeting.waitingRoomEnabled &&
+        !isHost &&
+        !isCoHost &&
+        !hasAcceptedInvitation
+      ) {
         state.waiting.set(socket.id, participant);
         socket.emit("meeting:waiting-room");
         io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));

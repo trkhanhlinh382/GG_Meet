@@ -8,6 +8,7 @@ import {
   VideoCameraOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Input, List, Row, Select, Space, Switch, Tag, Typography, message } from "antd";
+import { RightOutlined, LeftOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, type Socket } from "socket.io-client";
@@ -56,6 +57,8 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
   const [isCoHost, setIsCoHost] = useState(false);
   const [participants, setParticipants] = useState<ParticipantState[]>([]);
   const [waitingParticipants, setWaitingParticipants] = useState<ParticipantState[]>([]);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
+  const handleSideCollapse = () => setSideCollapsed((prev) => !prev);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [startsAt, setStartsAt] = useState<string | null>(null);
   const [countdownMs, setCountdownMs] = useState(0);
@@ -551,7 +554,7 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
 
   return (
     <Row gutter={[16, 16]}>
-      <Col xs={24} lg={16}>
+      <Col xs={24} lg={sideCollapsed ? 24 : 16}>
         <Card
           title={`Meeting Room: ${meetingId}`}
           extra={
@@ -611,119 +614,166 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
         </Card>
       </Col>
 
-      <Col xs={24} lg={8}>
-        <Card title="Participants">
-          <List
-            size="small"
-            dataSource={participants}
-            locale={{ emptyText: "Chưa có participant" }}
-            renderItem={(participant) => (
-              <List.Item
-                actions={
-                  isHostLike && participant.userId !== user.id
-                    ? [
+      <Col xs={24} lg={8} style={{ display: sideCollapsed ? "none" : undefined }}>
+        <div style={{ position: "relative", marginBottom: 16 }}>
+          <Card
+            title="Meeting Side Panel"
+            extra={
+              <Button
+                type="text"
+                icon={sideCollapsed ? <LeftOutlined /> : <RightOutlined />}
+                onClick={handleSideCollapse}
+                style={{ marginLeft: 8 }}
+              />
+            }
+            style={{
+              transition: "transform 0.3s cubic-bezier(.4,0,.2,1)",
+              transform: sideCollapsed ? "translateX(100%)" : "none",
+              position: "relative",
+              zIndex: 2,
+              minHeight: 600,
+            }}
+            bodyStyle={{ display: sideCollapsed ? "none" : undefined }}
+          >
+                  {/* Nút nổi khi panel đã thu nhỏ: mở lại panel và rời phòng */}
+                  {sideCollapsed && (
+                    <Button
+                      type="primary"
+                      shape="circle"
+                      icon={<RightOutlined style={{ fontSize: 28 }} />}
+                      onClick={handleSideCollapse}
+                      style={{
+                        position: "fixed",
+                        top: "50%",
+                        right: 0,
+                        zIndex: 9999,
+                        transform: "translateY(-50%)",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+                        width: 56,
+                        height: 56,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: "#1677ff",
+                        border: "none",
+                      }}
+                      size="large"
+                    />
+                  )}
+            <div style={{ marginBottom: 16 }}>
+              <Typography.Title level={5}>Participants</Typography.Title>
+              <List
+                size="small"
+                dataSource={participants}
+                locale={{ emptyText: "Chưa có participant" }}
+                renderItem={(participant) => (
+                  <List.Item>
+                    <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
+                      <Typography.Text strong>{participant.name}</Typography.Text>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
+                        <Tag color={participant.micOn ? "green" : "red"}>{participant.micOn ? "Mic" : "Muted"}</Tag>
+                        <Tag color={participant.cameraOn ? "blue" : "default"}>{participant.cameraOn ? "Cam" : "Cam Off"}</Tag>
+                        {isHostLike && participant.userId !== user.id && (
+                          <>
+                            <Button
+                              key="cohost"
+                              size="small"
+                              icon={<UserSwitchOutlined />}
+                              onClick={() =>
+                                socketRef.current?.emit("meeting:host-assign-cohost", {
+                                  meetingId,
+                                  actorUserId: user.id,
+                                  targetSocketId: participant.socketId,
+                                })
+                              }
+                            >
+                              Co-host
+                            </Button>
+                            <Button
+                              key="remove"
+                              danger
+                              size="small"
+                              onClick={() =>
+                                socketRef.current?.emit("meeting:host-remove", {
+                                  meetingId,
+                                  actorUserId: user.id,
+                                  targetSocketId: participant.socketId,
+                                })
+                              }
+                            >
+                              Remove
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </List.Item>
+                )}
+              />
+            </div>
+            {isHostLike && (
+              <div style={{ marginBottom: 16 }}>
+                <Typography.Title level={5}>Waiting Room</Typography.Title>
+                <List
+                  size="small"
+                  dataSource={waitingParticipants}
+                  locale={{ emptyText: "Không có ai chờ" }}
+                  renderItem={(participant) => (
+                    <List.Item
+                      actions={[
                         <Button
-                          key="cohost"
-                          size="small"
-                          icon={<UserSwitchOutlined />}
+                          key="approve"
+                          type="link"
                           onClick={() =>
-                            socketRef.current?.emit("meeting:host-assign-cohost", {
+                            socketRef.current?.emit("meeting:host-approve", {
                               meetingId,
                               actorUserId: user.id,
                               targetSocketId: participant.socketId,
                             })
                           }
                         >
-                          Co-host
+                          Approve
                         </Button>,
                         <Button
-                          key="remove"
+                          key="reject"
                           danger
-                          size="small"
+                          type="link"
                           onClick={() =>
-                            socketRef.current?.emit("meeting:host-remove", {
+                            socketRef.current?.emit("meeting:host-reject", {
                               meetingId,
                               actorUserId: user.id,
                               targetSocketId: participant.socketId,
                             })
                           }
                         >
-                          Remove
+                          Reject
                         </Button>,
-                      ]
-                    : undefined
-                }
-              >
-                <Space>
-                  <Typography.Text>{participant.name}</Typography.Text>
-                  <Tag color={participant.micOn ? "green" : "red"}>{participant.micOn ? "Mic" : "Muted"}</Tag>
-                  <Tag color={participant.cameraOn ? "blue" : "default"}>{participant.cameraOn ? "Cam" : "Cam Off"}</Tag>
-                </Space>
-              </List.Item>
+                      ]}
+                    >
+                      <Typography.Text>{participant.name}</Typography.Text>
+                    </List.Item>
+                  )}
+                />
+              </div>
             )}
-          />
-        </Card>
-
-        {isHostLike && (
-          <Card title="Waiting Room" style={{ marginTop: 16 }}>
-            <List
-              size="small"
-              dataSource={waitingParticipants}
-              locale={{ emptyText: "Không có ai chờ" }}
-              renderItem={(participant) => (
-                <List.Item
-                  actions={[
-                    <Button
-                      key="approve"
-                      type="link"
-                      onClick={() =>
-                        socketRef.current?.emit("meeting:host-approve", {
-                          meetingId,
-                          actorUserId: user.id,
-                          targetSocketId: participant.socketId,
-                        })
-                      }
-                    >
-                      Approve
-                    </Button>,
-                    <Button
-                      key="reject"
-                      danger
-                      type="link"
-                      onClick={() =>
-                        socketRef.current?.emit("meeting:host-reject", {
-                          meetingId,
-                          actorUserId: user.id,
-                          targetSocketId: participant.socketId,
-                        })
-                      }
-                    >
-                      Reject
-                    </Button>,
-                  ]}
-                >
-                  <Typography.Text>{participant.name}</Typography.Text>
-                </List.Item>
-              )}
-            />
+            <div>
+              <Typography.Title level={5}>Realtime Chat</Typography.Title>
+              <List
+                size="small"
+                dataSource={sortedMessages}
+                locale={{ emptyText: "Chưa có tin nhắn" }}
+                renderItem={(item) => (
+                  <List.Item>
+                    <Typography.Text strong>{item.sender}: </Typography.Text>
+                    <Typography.Text>{item.message}</Typography.Text>
+                  </List.Item>
+                )}
+                style={{ minHeight: 180 }}
+              />
+              <Input.Search value={text} onChange={(event) => setText(event.target.value)} onSearch={sendMessage} enterButton="Send" />
+            </div>
           </Card>
-        )}
-
-        <Card title="Realtime Chat" extra={<MessageOutlined />} style={{ marginTop: 16 }}>
-          <List
-            size="small"
-            dataSource={sortedMessages}
-            locale={{ emptyText: "Chưa có tin nhắn" }}
-            renderItem={(item) => (
-              <List.Item>
-                <Typography.Text strong>{item.sender}: </Typography.Text>
-                <Typography.Text>{item.message}</Typography.Text>
-              </List.Item>
-            )}
-            style={{ minHeight: 280 }}
-          />
-          <Input.Search value={text} onChange={(event) => setText(event.target.value)} onSearch={sendMessage} enterButton="Send" />
-        </Card>
+        </div>
       </Col>
     </Row>
   );
