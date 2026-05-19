@@ -1,0 +1,319 @@
+import type { Server, Socket } from "socket.io";
+import { MeetingModel } from "../models/meeting.model";
+
+interface ParticipantState {
+  socketId: string;
+  userId: string;
+  name: string;
+  micOn: boolean;
+  cameraOn: boolean;
+}
+
+interface MeetingRoomState {
+  hostUserId: string;
+  coHostUserIds: Set<string>;
+  locked: boolean;
+  participants: Map<string, ParticipantState>;
+  waiting: Map<string, ParticipantState>;
+}
+
+interface JoinRequestPayload {
+  meetingId: string;
+  userId: string;
+  name: string;
+}
+
+interface HostActionPayload {
+  meetingId: string;
+  targetSocketId: string;
+  actorUserId: string;
+}
+
+interface HostLockPayload {
+  meetingId: string;
+  actorUserId: string;
+  locked: boolean;
+}
+
+interface HostEndPayload {
+  meetingId: string;
+  actorUserId: string;
+}
+
+interface ParticipantStatePayload {
+  meetingId: string;
+  micOn: boolean;
+  cameraOn: boolean;
+}
+
+interface ChatPayload {
+  meetingId: string;
+  message: string;
+  sender: string;
+}
+
+interface WebRtcOfferPayload {
+  meetingId: string;
+  toSocketId: string;
+  offer: unknown;
+  fromSocketId: string;
+}
+
+interface WebRtcAnswerPayload {
+  meetingId: string;
+  toSocketId: string;
+  answer: unknown;
+  fromSocketId: string;
+}
+
+interface WebRtcIcePayload {
+  meetingId: string;
+  toSocketId: string;
+  candidate: unknown;
+  fromSocketId: string;
+}
+
+const rooms = new Map<string, MeetingRoomState>();
+
+const getRoomState = (meetingId: string, hostUserId: string): MeetingRoomState => {
+  const state = rooms.get(meetingId);
+  if (state) {
+    return state;
+  }
+
+  const created: MeetingRoomState = {
+    hostUserId,
+    coHostUserIds: new Set<string>(),
+    locked: false,
+    participants: new Map<string, ParticipantState>(),
+    waiting: new Map<string, ParticipantState>(),
+  };
+
+  rooms.set(meetingId, created);
+  return created;
+};
+
+const isHostLike = (state: MeetingRoomState, userId: string): boolean => {
+  return state.hostUserId === userId || state.coHostUserIds.has(userId);
+};
+
+export const registerMeetingRealtime = (io: Server): void => {
+  io.on("connection", (socket: Socket) => {
+    socket.on("meeting:request-join", async (payload: JoinRequestPayload) => {
+      const { meetingId, userId, name } = payload;
+      const meeting = await MeetingModel.findById(meetingId);
+
+      if (!meeting) {
+        socket.emit("meeting:join-denied", { reason: "Meeting not found" });
+        return;
+      }
+
+      const hostUserId = meeting.ownerId.toString();
+      const state = getRoomState(meetingId, hostUserId);
+
+      if (state.locked && !isHostLike(state, userId)) {
+        socket.emit("meeting:join-denied", { reason: "Meeting is locked by host" });
+        return;
+      }
+
+      const participant: ParticipantState = {
+        socketId: socket.id,
+        userId,
+        name,
+        micOn: true,
+        cameraOn: true,
+      };
+
+      const isHost = userId === state.hostUserId;
+      const isCoHost = state.coHostUserIds.has(userId);
+
+      if (meeting.waitingRoomEnabled && !isHost && !isCoHost) {
+        state.waiting.set(socket.id, participant);
+        socket.emit("meeting:waiting-room");
+        io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
+        return;
+      }
+
+      socket.join(meetingId);
+      state.participants.set(socket.id, participant);
+
+      socket.emit("meeting:join-approved", {
+        meetingId,
+        isHost,
+        isCoHost,
+        locked: state.locked,
+        participants: Array.from(state.participants.values()).filter((item) => item.socketId !== socket.id),
+      });
+
+      socket.to(meetingId).emit("meeting:participant-joined", participant);
+      io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
+      io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
+    });
+
+    socket.on("meeting:host-approve", (payload: HostActionPayload) => {
+      const { meetingId, targetSocketId, actorUserId } = payload;
+      const state = rooms.get(meetingId);
+      if (!state || !isHostLike(state, actorUserId)) {
+        return;
+      }
+
+      const target = state.waiting.get(targetSocketId);
+      if (!target) {
+        return;
+      }
+
+      state.waiting.delete(targetSocketId);
+      state.participants.set(targetSocketId, target);
+
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      targetSocket?.join(meetingId);
+      targetSocket?.emit("meeting:join-approved", {
+        meetingId,
+        isHost: target.userId === state.hostUserId,
+        isCoHost: state.coHostUserIds.has(target.userId),
+        locked: state.locked,
+        participants: Array.from(state.participants.values()).filter((item) => item.socketId !== targetSocketId),
+      });
+
+      io.to(meetingId).emit("meeting:participant-joined", target);
+      io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
+      io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
+    });
+
+    socket.on("meeting:host-reject", (payload: HostActionPayload) => {
+      const { meetingId, targetSocketId, actorUserId } = payload;
+      const state = rooms.get(meetingId);
+      if (!state || !isHostLike(state, actorUserId)) {
+        return;
+      }
+
+      const target = state.waiting.get(targetSocketId);
+      if (!target) {
+        return;
+      }
+
+      state.waiting.delete(targetSocketId);
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      targetSocket?.emit("meeting:join-denied", { reason: "Host rejected the request" });
+      targetSocket?.disconnect(true);
+      io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
+    });
+
+    socket.on("meeting:host-lock", (payload: HostLockPayload) => {
+      const { meetingId, actorUserId, locked } = payload;
+      const state = rooms.get(meetingId);
+      if (!state || !isHostLike(state, actorUserId)) {
+        return;
+      }
+
+      state.locked = Boolean(locked);
+      io.to(meetingId).emit("meeting:room-locked", { locked: state.locked });
+    });
+
+    socket.on("meeting:host-remove", (payload: HostActionPayload) => {
+      const { meetingId, targetSocketId, actorUserId } = payload;
+      const state = rooms.get(meetingId);
+      if (!state || !isHostLike(state, actorUserId)) {
+        return;
+      }
+
+      state.participants.delete(targetSocketId);
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      targetSocket?.emit("meeting:removed", { reason: "Removed by host" });
+      targetSocket?.leave(meetingId);
+      io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
+      io.to(meetingId).emit("meeting:participant-left", { socketId: targetSocketId });
+    });
+
+    socket.on("meeting:host-assign-cohost", (payload: HostActionPayload) => {
+      const { meetingId, targetSocketId, actorUserId } = payload;
+      const state = rooms.get(meetingId);
+      if (!state || !isHostLike(state, actorUserId)) {
+        return;
+      }
+
+      const target = state.participants.get(targetSocketId);
+      if (!target) {
+        return;
+      }
+
+      state.coHostUserIds.add(target.userId);
+      io.to(targetSocketId).emit("meeting:cohost-assigned");
+    });
+
+    socket.on("meeting:host-end", (payload: HostEndPayload) => {
+      const { meetingId, actorUserId } = payload;
+      const state = rooms.get(meetingId);
+      if (!state || !isHostLike(state, actorUserId)) {
+        return;
+      }
+
+      io.to(meetingId).emit("meeting:ended");
+      rooms.delete(meetingId);
+      io.in(meetingId).socketsLeave(meetingId);
+    });
+
+    socket.on("meeting:participant-state", (payload: ParticipantStatePayload) => {
+      const { meetingId, micOn, cameraOn } = payload;
+      const state = rooms.get(meetingId);
+      if (!state) {
+        return;
+      }
+
+      const participant = state.participants.get(socket.id);
+      if (!participant) {
+        return;
+      }
+
+      participant.micOn = micOn;
+      participant.cameraOn = cameraOn;
+      io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
+    });
+
+    socket.on("meeting:chat", (payload: ChatPayload) => {
+      const { meetingId, message, sender } = payload;
+      io.to(meetingId).emit("meeting:chat", {
+        meetingId,
+        message,
+        sender,
+        createdAt: new Date().toISOString(),
+      });
+    });
+
+    socket.on("meeting:webrtc-offer", (payload: WebRtcOfferPayload) => {
+      const { meetingId, toSocketId, offer, fromSocketId } = payload;
+      io.to(toSocketId).emit("meeting:webrtc-offer", { meetingId, offer, fromSocketId });
+    });
+
+    socket.on("meeting:webrtc-answer", (payload: WebRtcAnswerPayload) => {
+      const { meetingId, toSocketId, answer, fromSocketId } = payload;
+      io.to(toSocketId).emit("meeting:webrtc-answer", { meetingId, answer, fromSocketId });
+    });
+
+    socket.on("meeting:webrtc-ice", (payload: WebRtcIcePayload) => {
+      const { meetingId, toSocketId, candidate, fromSocketId } = payload;
+      io.to(toSocketId).emit("meeting:webrtc-ice", { meetingId, candidate, fromSocketId });
+    });
+
+    socket.on("disconnect", () => {
+      for (const [meetingId, state] of rooms.entries()) {
+        if (state.waiting.delete(socket.id)) {
+          io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
+        }
+
+        const participant = state.participants.get(socket.id);
+        if (!participant) {
+          continue;
+        }
+
+        state.participants.delete(socket.id);
+        io.to(meetingId).emit("meeting:participant-left", { socketId: socket.id });
+        io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
+
+        if (state.participants.size === 0) {
+          rooms.delete(meetingId);
+        }
+      }
+    });
+  });
+};
