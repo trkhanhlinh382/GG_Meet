@@ -42,7 +42,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
           <Alert
             type="warning"
             showIcon
-            message="Thiếu VITE_GOOGLE_CLIENT_ID"
+            title="Thiếu VITE_GOOGLE_CLIENT_ID"
             description="Hãy cấu hình VITE_GOOGLE_CLIENT_ID trong client/.env để hiển thị nút login Google."
             style={{ marginBottom: 16 }}
           />
@@ -53,7 +53,6 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
             void handleGoogleSuccess(credentialResponse.credential);
           }}
           onError={() => message.error("Google Sign-In thất bại")}
-          useOneTap
         />
       </Card>
     </div>

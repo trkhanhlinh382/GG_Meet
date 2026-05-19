@@ -1,13 +1,16 @@
 export interface Meeting {
   _id: string;
-  ownerId?: string;
+  ownerId?: string | { _id: string; fullName: string; email: string };
   title: string;
   description?: string;
   category: string;
   startTime: string;
   endTime: string;
   status: string;
+  privacyMode?: "public" | "private";
   waitingRoomEnabled?: boolean;
+  recordingEnabled?: boolean;
+  recordingUrl?: string;
   hasConflict?: boolean;
   conflictCount?: number;
 }
@@ -22,7 +25,14 @@ export interface Task {
 export interface Invitation {
   _id: string;
   status: string;
-  meetingId: string;
+  meetingId: string | Meeting;
+}
+
+export interface InvitationWithMeeting {
+  _id: string;
+  status: "pending" | "accepted" | "rejected" | "maybe";
+  meetingId: Meeting;
+  userId: { _id: string; fullName: string; email: string } | string;
 }
 
 export interface Notification {
@@ -33,6 +43,7 @@ export interface Notification {
 }
 
 export interface DashboardPayload {
+  ongoingMeetings: Meeting[];
   upcomingMeetings: Meeting[];
   invitations: Invitation[];
   tasks: Task[];
@@ -53,4 +64,34 @@ export interface ParticipantState {
   name: string;
   micOn: boolean;
   cameraOn: boolean;
+}
+
+export interface MeetingMessage {
+  _id: string;
+  meetingId: string;
+  senderUserId?: string;
+  senderName: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface MeetingInvitationItem {
+  _id: string;
+  status: "pending" | "accepted" | "rejected" | "maybe";
+  userId: { _id: string; fullName: string; email: string } | string;
+}
+
+export interface WaitingRequestItem {
+  socketId: string;
+  userId: string;
+  name: string;
+  micOn: boolean;
+  cameraOn: boolean;
+}
+
+export interface MeetingDetailsPayload {
+  meeting: Meeting;
+  messages: MeetingMessage[];
+  invitations: MeetingInvitationItem[];
+  waitingRequests: WaitingRequestItem[];
 }

@@ -14,12 +14,13 @@ exports.dashboardRouter.get("/", auth_1.requireAuth, async (req, res) => {
         res.status(401).json({ message: "Unauthorized" });
         return;
     }
+    const now = new Date();
     const [upcomingMeetings, invitations, tasks, notifications, meetingHistory] = await Promise.all([
-        meeting_model_1.MeetingModel.find({ ownerId: userId, startTime: { $gte: new Date() } }).sort({ startTime: 1 }).limit(10),
+        meeting_model_1.MeetingModel.find({ ownerId: userId, endTime: { $gte: now }, status: { $ne: "cancelled" } }).sort({ startTime: 1 }).limit(10),
         invitation_model_1.InvitationModel.find({ userId }).sort({ createdAt: -1 }).limit(10),
         task_model_1.TaskModel.find({ assigneeId: userId }).sort({ createdAt: -1 }).limit(20),
         notification_model_1.NotificationModel.find({ userId }).sort({ createdAt: -1 }).limit(20),
-        meeting_model_1.MeetingModel.find({ ownerId: userId, endTime: { $lt: new Date() } }).sort({ endTime: -1 }).limit(10),
+        meeting_model_1.MeetingModel.find({ ownerId: userId, endTime: { $lt: now } }).sort({ endTime: -1 }).limit(10),
     ]);
     res.json({
         upcomingMeetings,

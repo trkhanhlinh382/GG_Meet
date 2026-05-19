@@ -1,18 +1,17 @@
 import {
   AudioMutedOutlined,
   AudioOutlined,
-  LockOutlined,
   MessageOutlined,
   StopOutlined,
-  UnlockOutlined,
   UserSwitchOutlined,
   VideoCameraAddOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Input, List, Row, Space, Switch, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Input, List, Row, Select, Space, Switch, Tag, Typography, message } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, type Socket } from "socket.io-client";
+import { http } from "../api/http";
 import type { ParticipantState } from "../api/types";
 
 interface SessionUser {
@@ -55,10 +54,13 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
   const [waitingRoom, setWaitingRoom] = useState(false);
   const [isHost, setIsHost] = useState(false);
   const [isCoHost, setIsCoHost] = useState(false);
-  const [locked, setLocked] = useState(false);
   const [participants, setParticipants] = useState<ParticipantState[]>([]);
   const [waitingParticipants, setWaitingParticipants] = useState<ParticipantState[]>([]);
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+  const [startsAt, setStartsAt] = useState<string | null>(null);
+  const [countdownMs, setCountdownMs] = useState(0);
+  const [privacyMode, setPrivacyMode] = useState<"public" | "private">("private");
+  const [updatingPrivacy, setUpdatingPrivacy] = useState(false);
 
   const isHostLike = isHost || isCoHost;
 
@@ -68,7 +70,7 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
   );
 
   const createPeerConnection = (remoteSocketId: string, initiateOffer: boolean) => {
-    if (!localStreamRef.current) {
+    if (remoteSocketId === socketRef.current?.id) {
       return;
     }
 
@@ -78,13 +80,24 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
 
     const peer = new RTCPeerConnection(rtcConfig);
 
-    localStreamRef.current.getTracks().forEach((track) => {
-      peer.addTrack(track, localStreamRef.current as MediaStream);
-    });
+    const localStream = localStreamRef.current;
+    if (localStream) {
+      localStream.getTracks().forEach((track) => {
+        peer.addTrack(track, localStream);
+      });
+    }
 
     peer.ontrack = (event) => {
-      const [stream] = event.streams;
-      setRemoteStreams((prev) => ({ ...prev, [remoteSocketId]: stream }));
+      setRemoteStreams((prev) => {
+        const current = prev[remoteSocketId] ?? new MediaStream();
+
+        // Keep at most one video and one audio track for stable rendering.
+        const sameKindTracks = current.getTracks().filter((track) => track.kind === event.track.kind);
+        sameKindTracks.forEach((track) => current.removeTrack(track));
+        current.addTrack(event.track);
+
+        return { ...prev, [remoteSocketId]: current };
+      });
     };
 
     peer.onicecandidate = (event) => {
@@ -115,13 +128,82 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
     }
   };
 
+  const renegotiatePeer = async (remoteSocketId: string) => {
+    const peer = peersRef.current.get(remoteSocketId);
+    if (!peer || peer.signalingState === "closed") {
+      return;
+    }
+
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+
+    socketRef.current?.emit("meeting:webrtc-offer", {
+      meetingId,
+      toSocketId: remoteSocketId,
+      fromSocketId: socketRef.current?.id,
+      offer,
+    });
+  };
+
+  const ensureLocalTracksOnPeer = async (remoteSocketId: string) => {
+    const peer = peersRef.current.get(remoteSocketId);
+    const localStream = localStreamRef.current;
+    if (!peer || !localStream) {
+      return;
+    }
+
+    const senders = peer.getSenders();
+
+    for (const track of localStream.getTracks()) {
+      const existingSender = senders.find((sender) => sender.track?.kind === track.kind);
+      if (existingSender) {
+        await existingSender.replaceTrack(track);
+      } else {
+        peer.addTrack(track, localStream);
+      }
+    }
+  };
+
+  const switchOutgoingVideoTrack = async (remoteSocketId: string, nextTrack: MediaStreamTrack, sourceStream: MediaStream) => {
+    const peer = peersRef.current.get(remoteSocketId);
+    if (!peer) {
+      return;
+    }
+
+    const sender = peer.getSenders().find((item) => item.track?.kind === "video");
+    if (sender) {
+      await sender.replaceTrack(nextTrack);
+      return;
+    }
+
+    peer.addTrack(nextTrack, sourceStream);
+  };
+
   useEffect(() => {
+    http
+      .get(`/meetings/${meetingId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      .then((response) => {
+        if (response.data?.privacyMode === "public" || response.data?.privacyMode === "private") {
+          setPrivacyMode(response.data.privacyMode);
+        }
+      })
+      .catch(() => undefined);
+
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
+        }
+
+        // If peers already exist, publish camera/mic tracks immediately and renegotiate.
+        for (const [remoteSocketId] of peersRef.current.entries()) {
+          void ensureLocalTracksOnPeer(remoteSocketId).then(() => renegotiatePeer(remoteSocketId));
         }
       })
       .catch(() => {
@@ -148,16 +230,23 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
       setJoined(false);
     });
 
-    socket.on("meeting:join-approved", ({ isHost: host, isCoHost: coHost, participants: existingParticipants, locked: roomLocked }) => {
+    socket.on("meeting:not-started", ({ startsAt: nextStartsAt }) => {
+      setStartsAt(new Date(nextStartsAt).toISOString());
+      setJoined(false);
+      setWaitingRoom(false);
+    });
+
+    socket.on("meeting:join-approved", ({ isHost: host, isCoHost: coHost, participants: existingParticipants }) => {
+      setStartsAt(null);
       setWaitingRoom(false);
       setJoined(true);
       setIsHost(Boolean(host));
       setIsCoHost(Boolean(coHost));
-      setLocked(Boolean(roomLocked));
-      setParticipants(existingParticipants ?? []);
+      setParticipants((existingParticipants ?? []).filter((participant: ParticipantState) => participant.socketId !== socket.id));
 
       for (const participant of existingParticipants ?? []) {
         createPeerConnection(participant.socketId, true);
+        void ensureLocalTracksOnPeer(participant.socketId).then(() => renegotiatePeer(participant.socketId));
       }
     });
 
@@ -167,7 +256,7 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
     });
 
     socket.on("meeting:participants-updated", (items: ParticipantState[]) => {
-      setParticipants(items);
+      setParticipants(items.filter((participant) => participant.socketId !== socket.id));
     });
 
     socket.on("meeting:waiting-updated", (items: ParticipantState[]) => {
@@ -175,7 +264,13 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
     });
 
     socket.on("meeting:participant-joined", (participant: ParticipantState) => {
-      createPeerConnection(participant.socketId, true);
+      if (participant.socketId === socket.id) {
+        return;
+      }
+
+      // The newly joined user creates offers from join-approved; existing members wait for offer and answer.
+      createPeerConnection(participant.socketId, false);
+      void ensureLocalTracksOnPeer(participant.socketId);
     });
 
     socket.on("meeting:participant-left", ({ socketId }) => {
@@ -187,10 +282,6 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
         delete next[socketId];
         return next;
       });
-    });
-
-    socket.on("meeting:room-locked", ({ locked: roomLocked }) => {
-      setLocked(Boolean(roomLocked));
     });
 
     socket.on("meeting:cohost-assigned", () => {
@@ -265,6 +356,52 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
     };
   }, [meetingId, navigate, token, user.fullName, user.id]);
 
+  useEffect(() => {
+    if (!startsAt) {
+      setCountdownMs(0);
+      return;
+    }
+
+    const update = () => {
+      const diff = new Date(startsAt).getTime() - Date.now();
+      setCountdownMs(Math.max(0, diff));
+    };
+
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [startsAt]);
+
+  useEffect(() => {
+    if (!startsAt || countdownMs > 0 || joined || waitingRoom) {
+      return;
+    }
+
+    socketRef.current?.emit("meeting:request-join", {
+      meetingId,
+      userId: user.id,
+      name: user.fullName,
+    });
+  }, [countdownMs, joined, meetingId, startsAt, user.fullName, user.id, waitingRoom]);
+
+  useEffect(() => {
+    const validSocketIds = new Set(participants.map((item) => item.socketId));
+
+    setRemoteStreams((prev) => {
+      const next: Record<string, MediaStream> = {};
+      for (const [socketId, stream] of Object.entries(prev)) {
+        if (validSocketIds.has(socketId)) {
+          next[socketId] = stream;
+        }
+      }
+      return next;
+    });
+  }, [participants]);
+
+  const participantNameBySocket = useMemo(() => {
+    return new Map(participants.map((item) => [item.socketId, item.name]));
+  }, [participants]);
+
   const sendMessage = () => {
     if (!text.trim()) {
       return;
@@ -310,10 +447,20 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true });
       const screenTrack = display.getVideoTracks()[0];
 
-      peersRef.current.forEach((peer) => {
-        const sender = peer.getSenders().find((item) => item.track?.kind === "video");
-        sender?.replaceTrack(screenTrack);
-      });
+      if (!screenTrack) {
+        message.warning("Không tìm thấy track màn hình để chia sẻ");
+        return;
+      }
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = display;
+      }
+
+      for (const [remoteSocketId] of peersRef.current.entries()) {
+        await switchOutgoingVideoTrack(remoteSocketId, screenTrack, display);
+
+        await renegotiatePeer(remoteSocketId);
+      }
 
       screenTrack.onended = () => {
         const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
@@ -321,23 +468,19 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
           return;
         }
 
-        peersRef.current.forEach((peer) => {
-          const sender = peer.getSenders().find((item) => item.track?.kind === "video");
-          sender?.replaceTrack(cameraTrack);
-        });
+        if (localVideoRef.current && localStreamRef.current) {
+          localVideoRef.current.srcObject = localStreamRef.current;
+        }
+
+        for (const [remoteSocketId] of peersRef.current.entries()) {
+          void switchOutgoingVideoTrack(remoteSocketId, cameraTrack, localStreamRef.current as MediaStream);
+
+          void renegotiatePeer(remoteSocketId);
+        }
       };
     } catch {
       message.warning("Không thể chia sẻ màn hình");
     }
-  };
-
-  const toggleLock = (nextLocked: boolean) => {
-    setLocked(nextLocked);
-    socketRef.current?.emit("meeting:host-lock", {
-      meetingId,
-      actorUserId: user.id,
-      locked: nextLocked,
-    });
   };
 
   const endMeeting = () => {
@@ -347,8 +490,63 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
     });
   };
 
+  const leaveMeeting = () => {
+    navigate("/dashboard");
+  };
+
+  const updatePrivacyMode = async (nextMode: "public" | "private") => {
+    if (!isHost) {
+      return;
+    }
+
+    const previous = privacyMode;
+    setPrivacyMode(nextMode);
+    setUpdatingPrivacy(true);
+
+    try {
+      await http.patch(
+        `/meetings/${meetingId}/privacy`,
+        { privacyMode: nextMode },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      message.success(`Meeting switched to ${nextMode}`);
+    } catch {
+      setPrivacyMode(previous);
+      message.error("Không cập nhật được quyền Public/Private");
+    } finally {
+      setUpdatingPrivacy(false);
+    }
+  };
+
+  const formatCountdown = (totalMs: number): string => {
+    const totalSec = Math.floor(totalMs / 1000);
+    const hours = Math.floor(totalSec / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+
+    return [hours, minutes, seconds]
+      .map((item) => item.toString().padStart(2, "0"))
+      .join(":");
+  };
+
   if (waitingRoom) {
     return <Alert type="info" showIcon message="Bạn đang ở waiting room" description="Chờ host phê duyệt để vào phòng họp." />;
+  }
+
+  if (startsAt && countdownMs > 0) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="Cuộc họp chưa bắt đầu"
+        description={`Thời gian còn lại: ${formatCountdown(countdownMs)} (bắt đầu lúc ${new Date(startsAt).toLocaleString()})`}
+      />
+    );
   }
 
   return (
@@ -357,18 +555,25 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
         <Card
           title={`Meeting Room: ${meetingId}`}
           extra={
-            isHostLike ? (
-              <Space>
-                <Button icon={locked ? <UnlockOutlined /> : <LockOutlined />} onClick={() => toggleLock(!locked)}>
-                  {locked ? "Unlock" : "Lock"}
+            <Space>
+              <Select
+                value={privacyMode}
+                disabled={!isHost}
+                loading={updatingPrivacy}
+                style={{ width: 120 }}
+                options={[
+                  { value: "private", label: "Private" },
+                  { value: "public", label: "Public" },
+                ]}
+                onChange={(value) => void updatePrivacyMode(value as "public" | "private")}
+              />
+              {isHost && (
+                <Button danger icon={<StopOutlined />} onClick={endMeeting}>
+                  Cancel Meeting
                 </Button>
-                {isHost && (
-                  <Button danger icon={<StopOutlined />} onClick={endMeeting}>
-                    End Meeting
-                  </Button>
-                )}
-              </Space>
-            ) : null
+              )}
+              {!isHost && <Button onClick={leaveMeeting}>Leave Meeting</Button>}
+            </Space>
           }
         >
           {!joined && <Alert type="warning" showIcon message="Đang kết nối room..." style={{ marginBottom: 12 }} />}
@@ -381,7 +586,7 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
 
             {Object.entries(remoteStreams).map(([socketId, stream]) => (
               <div className="video-card" key={socketId}>
-                <Typography.Text strong>Participant</Typography.Text>
+                <Typography.Text strong>{participantNameBySocket.get(socketId) ?? "Participant"}</Typography.Text>
                 <video
                   autoPlay
                   playsInline

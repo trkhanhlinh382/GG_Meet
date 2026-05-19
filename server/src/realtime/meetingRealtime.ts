@@ -1,4 +1,6 @@
 import type { Server, Socket } from "socket.io";
+import { InvitationModel } from "../models/invitation.model";
+import { MeetingMessageModel } from "../models/meeting-message.model";
 import { MeetingModel } from "../models/meeting.model";
 
 interface ParticipantState {
@@ -15,6 +17,12 @@ interface MeetingRoomState {
   locked: boolean;
   participants: Map<string, ParticipantState>;
   waiting: Map<string, ParticipantState>;
+}
+
+export interface MeetingRealtimeSnapshot {
+  participants: ParticipantState[];
+  waiting: ParticipantState[];
+  locked: boolean;
 }
 
 interface JoinRequestPayload {
@@ -48,6 +56,7 @@ interface ParticipantStatePayload {
 
 interface ChatPayload {
   meetingId: string;
+  userId?: string;
   message: string;
   sender: string;
 }
@@ -74,6 +83,19 @@ interface WebRtcIcePayload {
 }
 
 const rooms = new Map<string, MeetingRoomState>();
+
+export const getMeetingRealtimeSnapshot = (meetingId: string): MeetingRealtimeSnapshot | null => {
+  const state = rooms.get(meetingId);
+  if (!state) {
+    return null;
+  }
+
+  return {
+    participants: Array.from(state.participants.values()),
+    waiting: Array.from(state.waiting.values()),
+    locked: state.locked,
+  };
+};
 
 const getRoomState = (meetingId: string, hostUserId: string): MeetingRoomState => {
   const state = rooms.get(meetingId);
@@ -110,6 +132,30 @@ export const registerMeetingRealtime = (io: Server): void => {
 
       const hostUserId = meeting.ownerId.toString();
       const state = getRoomState(meetingId, hostUserId);
+
+      const now = new Date();
+      if (meeting.startTime > now) {
+        socket.emit("meeting:not-started", {
+          meetingId,
+          startsAt: meeting.startTime,
+        });
+        return;
+      }
+
+      if (meeting.privacyMode === "private" && userId !== hostUserId) {
+        const acceptedInvitation = await InvitationModel.findOne({
+          meetingId: meeting.id,
+          userId,
+          status: "accepted",
+        });
+
+        if (!acceptedInvitation) {
+          socket.emit("meeting:join-denied", {
+            reason: "Private meeting: only invited users with accepted invitation can join",
+          });
+          return;
+        }
+      }
 
       if (state.locked && !isHostLike(state, userId)) {
         socket.emit("meeting:join-denied", { reason: "Meeting is locked by host" });
@@ -175,7 +221,7 @@ export const registerMeetingRealtime = (io: Server): void => {
         participants: Array.from(state.participants.values()).filter((item) => item.socketId !== targetSocketId),
       });
 
-      io.to(meetingId).emit("meeting:participant-joined", target);
+      socket.to(meetingId).emit("meeting:participant-joined", target);
       io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
       io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
     });
@@ -248,9 +294,16 @@ export const registerMeetingRealtime = (io: Server): void => {
         return;
       }
 
-      io.to(meetingId).emit("meeting:ended");
-      rooms.delete(meetingId);
-      io.in(meetingId).socketsLeave(meetingId);
+      void MeetingModel.findByIdAndUpdate(meetingId, {
+        status: "ended",
+        endTime: new Date(),
+      })
+        .catch(() => undefined)
+        .finally(() => {
+          io.to(meetingId).emit("meeting:ended");
+          rooms.delete(meetingId);
+          io.in(meetingId).socketsLeave(meetingId);
+        });
     });
 
     socket.on("meeting:participant-state", (payload: ParticipantStatePayload) => {
@@ -271,12 +324,22 @@ export const registerMeetingRealtime = (io: Server): void => {
     });
 
     socket.on("meeting:chat", (payload: ChatPayload) => {
-      const { meetingId, message, sender } = payload;
+      const { meetingId, userId, message, sender } = payload;
+      const createdAt = new Date().toISOString();
+
+      void MeetingMessageModel.create({
+        meetingId,
+        senderUserId: userId,
+        senderName: sender,
+        message,
+        createdAt,
+      }).catch(() => undefined);
+
       io.to(meetingId).emit("meeting:chat", {
         meetingId,
         message,
         sender,
-        createdAt: new Date().toISOString(),
+        createdAt,
       });
     });
 

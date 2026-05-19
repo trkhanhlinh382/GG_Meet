@@ -14,6 +14,8 @@ interface Meeting {
   status: MeetingStatus;
   privacyMode: PrivacyMode;
   waitingRoomEnabled: boolean;
+  recordingEnabled: boolean;
+  recordingUrl?: string;
   password?: string;
 }
 
@@ -36,6 +38,8 @@ const meetingSchema = new Schema<Meeting>(
     },
     privacyMode: { type: String, enum: ["public", "private"], default: "private" },
     waitingRoomEnabled: { type: Boolean, default: true },
+    recordingEnabled: { type: Boolean, default: false },
+    recordingUrl: { type: String },
     password: { type: String },
   },
   { timestamps: true },

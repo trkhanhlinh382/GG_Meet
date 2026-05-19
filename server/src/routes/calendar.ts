@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth, type AuthRequest } from "../middleware/auth";
+import { InvitationModel } from "../models/invitation.model";
 import { MeetingModel } from "../models/meeting.model";
 
 const calendarQuerySchema = z.object({
@@ -52,11 +53,14 @@ calendarRouter.get("/", requireAuth, async (req: AuthRequest, res) => {
   const requestedDate = parseResult.data.date ? new Date(parseResult.data.date) : new Date();
   const { start, end } = getWindow(parseResult.data.view, requestedDate);
 
+  const acceptedInvitations = await InvitationModel.find({ userId, status: "accepted" }).select("meetingId").lean();
+  const invitedMeetingIds = acceptedInvitations.map((invitation) => invitation.meetingId);
+
   const meetings = await MeetingModel.find({
-    ownerId: userId,
     startTime: { $gte: start, $lt: end },
     status: { $ne: "cancelled" },
-  }).sort({ startTime: 1 });
+    $or: [{ ownerId: userId }, { _id: { $in: invitedMeetingIds } }],
+  }).populate({ path: "ownerId", select: "fullName email" }).sort({ startTime: 1 });
 
   const enriched = meetings.map((meeting) => {
     const overlaps = meetings.filter(

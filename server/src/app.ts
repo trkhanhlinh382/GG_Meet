@@ -7,8 +7,10 @@ import { authRouter } from "./routes/auth";
 import { calendarRouter } from "./routes/calendar";
 import { dashboardRouter } from "./routes/dashboard";
 import { invitationRouter } from "./routes/invitations";
+import { meetingDetailsRouter } from "./routes/meeting-details";
 import { meetingRouter } from "./routes/meetings";
 import { taskRouter } from "./routes/tasks";
+import { notificationRouter } from "./routes/notifications";
 
 export const app = express();
 
@@ -30,5 +32,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/calendar", calendarRouter);
 app.use("/api/meetings", meetingRouter);
+app.use("/api/meetings", meetingDetailsRouter);
 app.use("/api/invitations", invitationRouter);
 app.use("/api/tasks", taskRouter);
+app.use("/api/notifications", notificationRouter);
