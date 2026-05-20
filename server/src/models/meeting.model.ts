@@ -17,6 +17,7 @@ interface Meeting {
   recordingEnabled: boolean;
   recordingUrl?: string;
   password?: string;
+  participants: Types.ObjectId[];
 }
 
 const meetingSchema = new Schema<Meeting>(
@@ -41,6 +42,7 @@ const meetingSchema = new Schema<Meeting>(
     recordingEnabled: { type: Boolean, default: false },
     recordingUrl: { type: String },
     password: { type: String },
+    participants: [{ type: Schema.Types.ObjectId, ref: "User" }],
   },
   { timestamps: true },
 );

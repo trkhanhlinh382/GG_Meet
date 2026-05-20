@@ -144,7 +144,8 @@ export const registerMeetingRealtime = (io: Server): void => {
 
 
       let hasAcceptedInvitation = false;
-      if (meeting.privacyMode === "private" && userId !== hostUserId) {
+      const isHost = userId === hostUserId;
+      if (meeting.privacyMode === "private" && !isHost) {
         const acceptedInvitation = await InvitationModel.findOne({
           meetingId: meeting.id,
           userId,
@@ -172,7 +173,7 @@ export const registerMeetingRealtime = (io: Server): void => {
         cameraOn: true,
       };
 
-      const isHost = userId === state.hostUserId;
+      // moved up for logic
       const isCoHost = state.coHostUserIds.has(userId);
 
       // Nếu đã accept invitation thì cho vào thẳng meeting, không vào phòng chờ

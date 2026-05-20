@@ -8,30 +8,40 @@ import { getMeetingRealtimeSnapshot } from "../realtime/meetingRealtime";
 export const meetingDetailsRouter = Router();
 
 meetingDetailsRouter.get("/:id/details", requireAuth, async (req: AuthRequest, res) => {
+    // DEBUG LOG
+    // eslint-disable-next-line no-console
+    console.log("[MEETING DETAILS] meetingId:", req.params.id);
   const userId = req.user?.id;
+    // eslint-disable-next-line no-console
+    console.log("[MEETING DETAILS] userId:", userId);
   if (!userId) {
     res.status(401).json({ message: "Unauthorized" });
     return;
   }
 
   const meeting = await MeetingModel.findById(req.params.id).populate({ path: "ownerId", select: "fullName email" });
+  // eslint-disable-next-line no-console
+  console.log("[MEETING DETAILS] meeting.ownerId:", meeting?.ownerId?.toString?.() ?? meeting?.ownerId, "isOwner:", meeting?.ownerId?.toString?.() === userId);
   if (!meeting) {
     res.status(404).json({ message: "Meeting not found" });
     return;
   }
 
-  const isOwner = meeting.ownerId.toString() === userId;
-  if (!isOwner) {
-    const invitation = await InvitationModel.findOne({
-      meetingId: meeting.id,
-      userId,
-      status: "accepted",
-    });
-
-    if (!invitation) {
-      res.status(403).json({ message: "Forbidden" });
-      return;
-    }
+  // Nếu populate thì meeting.ownerId là object, nếu không thì là ObjectId
+  let ownerId;
+  if (meeting.ownerId && typeof meeting.ownerId === "object" && meeting.ownerId._id) {
+    ownerId = meeting.ownerId._id.toString();
+  } else {
+    ownerId = meeting.ownerId.toString();
+  }
+  const isOwner = ownerId === userId;
+  // Quyền truy cập: host hoặc participants
+  const isParticipant = Array.isArray(meeting.participants)
+    ? meeting.participants.map((id: any) => id.toString()).includes(userId)
+    : false;
+  if (!isOwner && !isParticipant) {
+    res.status(403).json({ message: "Forbidden" });
+    return;
   }
 
   const messages = await MeetingMessageModel.find({ meetingId: meeting.id }).sort({ createdAt: 1 }).limit(2000);

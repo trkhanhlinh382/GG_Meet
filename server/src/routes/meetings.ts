@@ -68,15 +68,20 @@ meetingRouter.post("/", requireAuth, async (req: AuthRequest, res) => {
     recordingEnabled: data.recordingEnabled,
     recordingUrl: data.recordingUrl,
     password: data.password,
+    participants: [userId], // Host luôn là participant
   });
 
   if (data.participants?.length) {
-    await InvitationModel.insertMany(
-      data.participants.map((participantId) => ({
-        meetingId: meeting.id,
-        userId: participantId,
-      })),
-    );
+    // Không tạo invitation cho host
+    const filteredParticipants = data.participants.filter((participantId) => participantId !== String(userId));
+    if (filteredParticipants.length) {
+      await InvitationModel.insertMany(
+        filteredParticipants.map((participantId) => ({
+          meetingId: meeting.id,
+          userId: participantId,
+        })),
+      );
+    }
   }
 
   res.status(201).json(meeting);

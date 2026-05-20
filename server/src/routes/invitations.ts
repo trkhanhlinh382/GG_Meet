@@ -96,6 +96,16 @@ invitationRouter.post("/:id/accept", requireAuth, async (req: AuthRequest, res) 
     return;
   }
 
+  // Nếu accept, thêm user vào participants của meeting
+  const meetingId = result.invitation?.meetingId?._id?.toString?.() || result.invitation?.meetingId?.toString?.();
+  if (meetingId) {
+    const MeetingModel = require("../models/meeting.model").MeetingModel;
+    await MeetingModel.updateOne(
+      { _id: meetingId },
+      { $addToSet: { participants: userId } }
+    );
+  }
+
   res.json(result.invitation);
 });
 
