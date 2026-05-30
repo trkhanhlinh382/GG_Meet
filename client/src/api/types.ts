@@ -40,6 +40,7 @@ export interface Notification {
   title: string;
   content: string;
   isRead: boolean;
+  createdAt?: string;
 }
 
 export interface DashboardPayload {
@@ -64,6 +65,8 @@ export interface ParticipantState {
   name: string;
   micOn: boolean;
   cameraOn: boolean;
+  raisedHand?: boolean;
+  raisedHandTime?: string;
 }
 
 export interface MeetingMessage {
@@ -71,7 +74,12 @@ export interface MeetingMessage {
   meetingId: string;
   senderUserId?: string;
   senderName: string;
-  message: string;
+  message?: string;
+  fileData?: string;
+  fileName?: string;
+  fileType?: string;
+  sticker?: string;
+  isPinned?: boolean;
   createdAt: string;
 }
 

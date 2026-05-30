@@ -4,6 +4,7 @@ exports.calendarRouter = void 0;
 const express_1 = require("express");
 const zod_1 = require("zod");
 const auth_1 = require("../middleware/auth");
+const invitation_model_1 = require("../models/invitation.model");
 const meeting_model_1 = require("../models/meeting.model");
 const calendarQuerySchema = zod_1.z.object({
     view: zod_1.z.enum(["day", "week", "month"]).default("week"),
@@ -44,11 +45,13 @@ exports.calendarRouter.get("/", auth_1.requireAuth, async (req, res) => {
     }
     const requestedDate = parseResult.data.date ? new Date(parseResult.data.date) : new Date();
     const { start, end } = getWindow(parseResult.data.view, requestedDate);
+    const acceptedInvitations = await invitation_model_1.InvitationModel.find({ userId, status: "accepted" }).select("meetingId").lean();
+    const invitedMeetingIds = acceptedInvitations.map((invitation) => invitation.meetingId);
     const meetings = await meeting_model_1.MeetingModel.find({
-        ownerId: userId,
         startTime: { $gte: start, $lt: end },
         status: { $ne: "cancelled" },
-    }).sort({ startTime: 1 });
+        $or: [{ ownerId: userId }, { _id: { $in: invitedMeetingIds } }],
+    }).populate({ path: "ownerId", select: "fullName email" }).sort({ startTime: 1 });
     const enriched = meetings.map((meeting) => {
         const overlaps = meetings.filter((candidate) => candidate.id !== meeting.id &&
             candidate.startTime < meeting.endTime &&

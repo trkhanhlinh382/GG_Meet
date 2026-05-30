@@ -1,8 +1,28 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.registerMeetingRealtime = void 0;
+exports.registerMeetingRealtime = exports.closeRealtimeMeeting = exports.getMeetingRealtimeSnapshot = void 0;
+const invitation_model_1 = require("../models/invitation.model");
+const meeting_message_model_1 = require("../models/meeting-message.model");
 const meeting_model_1 = require("../models/meeting.model");
 const rooms = new Map();
+const getMeetingRealtimeSnapshot = (meetingId) => {
+    const state = rooms.get(meetingId);
+    if (!state) {
+        return null;
+    }
+    return {
+        participants: Array.from(state.participants.values()),
+        waiting: Array.from(state.waiting.values()),
+        locked: state.locked,
+    };
+};
+exports.getMeetingRealtimeSnapshot = getMeetingRealtimeSnapshot;
+const closeRealtimeMeeting = (meetingId, io) => {
+    io.to(meetingId).emit("meeting:ended");
+    rooms.delete(meetingId);
+    io.in(meetingId).socketsLeave(meetingId);
+};
+exports.closeRealtimeMeeting = closeRealtimeMeeting;
 const getRoomState = (meetingId, hostUserId) => {
     const state = rooms.get(meetingId);
     if (state) {
@@ -32,6 +52,30 @@ const registerMeetingRealtime = (io) => {
             }
             const hostUserId = meeting.ownerId.toString();
             const state = getRoomState(meetingId, hostUserId);
+            const now = new Date();
+            if (meeting.startTime > now) {
+                socket.emit("meeting:not-started", {
+                    meetingId,
+                    startsAt: meeting.startTime,
+                });
+                return;
+            }
+            let hasAcceptedInvitation = false;
+            const isHost = userId === hostUserId;
+            if (meeting.privacyMode === "private" && !isHost) {
+                const acceptedInvitation = await invitation_model_1.InvitationModel.findOne({
+                    meetingId: meeting.id,
+                    userId,
+                    status: "accepted",
+                });
+                if (!acceptedInvitation) {
+                    socket.emit("meeting:join-denied", {
+                        reason: "Private meeting: only invited users with accepted invitation can join",
+                    });
+                    return;
+                }
+                hasAcceptedInvitation = true;
+            }
             if (state.locked && !isHostLike(state, userId)) {
                 socket.emit("meeting:join-denied", { reason: "Meeting is locked by host" });
                 return;
@@ -43,9 +87,13 @@ const registerMeetingRealtime = (io) => {
                 micOn: true,
                 cameraOn: true,
             };
-            const isHost = userId === state.hostUserId;
+            // moved up for logic
             const isCoHost = state.coHostUserIds.has(userId);
-            if (meeting.waitingRoomEnabled && !isHost && !isCoHost) {
+            // Nếu đã accept invitation thì cho vào thẳng meeting, không vào phòng chờ
+            if (meeting.waitingRoomEnabled &&
+                !isHost &&
+                !isCoHost &&
+                !hasAcceptedInvitation) {
                 state.waiting.set(socket.id, participant);
                 socket.emit("meeting:waiting-room");
                 io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
@@ -85,7 +133,7 @@ const registerMeetingRealtime = (io) => {
                 locked: state.locked,
                 participants: Array.from(state.participants.values()).filter((item) => item.socketId !== targetSocketId),
             });
-            io.to(meetingId).emit("meeting:participant-joined", target);
+            socket.to(meetingId).emit("meeting:participant-joined", target);
             io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
             io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
         });
@@ -140,18 +188,40 @@ const registerMeetingRealtime = (io) => {
             state.coHostUserIds.add(target.userId);
             io.to(targetSocketId).emit("meeting:cohost-assigned");
         });
+        socket.on("meeting:host-lower-hand", (payload) => {
+            const { meetingId, targetSocketId, actorUserId } = payload;
+            const state = rooms.get(meetingId);
+            if (!state || !isHostLike(state, actorUserId)) {
+                return;
+            }
+            const target = state.participants.get(targetSocketId);
+            if (!target) {
+                return;
+            }
+            target.raisedHand = false;
+            target.raisedHandTime = undefined;
+            io.to(targetSocketId).emit("meeting:hand-lowered");
+            io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
+        });
         socket.on("meeting:host-end", (payload) => {
             const { meetingId, actorUserId } = payload;
             const state = rooms.get(meetingId);
             if (!state || !isHostLike(state, actorUserId)) {
                 return;
             }
-            io.to(meetingId).emit("meeting:ended");
-            rooms.delete(meetingId);
-            io.in(meetingId).socketsLeave(meetingId);
+            void meeting_model_1.MeetingModel.findByIdAndUpdate(meetingId, {
+                status: "ended",
+                endTime: new Date(),
+            })
+                .catch(() => undefined)
+                .finally(() => {
+                io.to(meetingId).emit("meeting:ended");
+                rooms.delete(meetingId);
+                io.in(meetingId).socketsLeave(meetingId);
+            });
         });
         socket.on("meeting:participant-state", (payload) => {
-            const { meetingId, micOn, cameraOn } = payload;
+            const { meetingId, micOn, cameraOn, raisedHand } = payload;
             const state = rooms.get(meetingId);
             if (!state) {
                 return;
@@ -162,15 +232,37 @@ const registerMeetingRealtime = (io) => {
             }
             participant.micOn = micOn;
             participant.cameraOn = cameraOn;
+            if (typeof raisedHand === "boolean") {
+                if (raisedHand && !participant.raisedHand) {
+                    participant.raisedHandTime = new Date().toISOString();
+                }
+                participant.raisedHand = raisedHand;
+            }
             io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
         });
         socket.on("meeting:chat", (payload) => {
-            const { meetingId, message, sender } = payload;
+            const { meetingId, userId, message, sender, fileData, fileName, fileType, sticker } = payload;
+            const createdAt = new Date().toISOString();
+            void meeting_message_model_1.MeetingMessageModel.create({
+                meetingId,
+                senderUserId: userId,
+                senderName: sender,
+                message,
+                fileData,
+                fileName,
+                fileType,
+                sticker,
+                createdAt,
+            }).catch(() => undefined);
             io.to(meetingId).emit("meeting:chat", {
                 meetingId,
                 message,
                 sender,
-                createdAt: new Date().toISOString(),
+                fileData,
+                fileName,
+                fileType,
+                sticker,
+                createdAt,
             });
         });
         socket.on("meeting:webrtc-offer", (payload) => {
@@ -184,6 +276,10 @@ const registerMeetingRealtime = (io) => {
         socket.on("meeting:webrtc-ice", (payload) => {
             const { meetingId, toSocketId, candidate, fromSocketId } = payload;
             io.to(toSocketId).emit("meeting:webrtc-ice", { meetingId, candidate, fromSocketId });
+        });
+        socket.on("meeting:draw", (payload) => {
+            const { meetingId } = payload;
+            socket.to(meetingId).emit("meeting:draw", payload);
         });
         socket.on("disconnect", () => {
             for (const [meetingId, state] of rooms.entries()) {

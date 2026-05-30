@@ -18,6 +18,11 @@ interface Meeting {
   recordingUrl?: string;
   password?: string;
   participants: Types.ObjectId[];
+  isRecurring?: boolean;
+  recurrence?: {
+    frequency: "daily" | "weekly" | "monthly" | "none";
+    endDate?: Date;
+  };
 }
 
 const meetingSchema = new Schema<Meeting>(
@@ -43,6 +48,11 @@ const meetingSchema = new Schema<Meeting>(
     recordingUrl: { type: String },
     password: { type: String },
     participants: [{ type: Schema.Types.ObjectId, ref: "User" }],
+    isRecurring: { type: Boolean, default: false },
+    recurrence: {
+      frequency: { type: String, enum: ["daily", "weekly", "monthly", "none"], default: "none" },
+      endDate: { type: Date },
+    },
   },
   { timestamps: true },
 );

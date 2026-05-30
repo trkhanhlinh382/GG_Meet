@@ -16,6 +16,7 @@ const bootstrap = async () => {
             credentials: true,
         },
     });
+    app_1.app.set("io", io);
     (0, meetingRealtime_1.registerMeetingRealtime)(io);
     (0, reminderScheduler_1.startReminderScheduler)();
     httpServer.listen(env_1.env.PORT, () => {

@@ -1,13 +1,12 @@
 import {
   AudioMutedOutlined,
   AudioOutlined,
-  MessageOutlined,
   StopOutlined,
   UserSwitchOutlined,
   VideoCameraAddOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Input, List, Row, Select, Space, Switch, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Input, List, Row, Select, Space, Switch, Tag, Typography, message, Tabs, Popover } from "antd";
 import { RightOutlined, LeftOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -24,12 +23,21 @@ interface SessionUser {
 interface MeetingRoomPageProps {
   token: string;
   user: SessionUser;
+  roomId?: string;
+  isMinimized?: boolean;
+  onMinimize?: () => void;
+  onMaximize?: () => void;
+  onLeave?: () => void;
 }
 
 interface ChatMessage {
   id: string;
   sender: string;
-  message: string;
+  message?: string;
+  fileData?: string;
+  fileName?: string;
+  fileType?: string;
+  sticker?: string;
   createdAt: string;
 }
 
@@ -37,10 +45,10 @@ const rtcConfig: RTCConfiguration = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
-export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
+export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMinimize, onMaximize, onLeave }: MeetingRoomPageProps) => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const meetingId = id ?? "live";
+  const meetingId = roomId || id || "live";
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -48,9 +56,11 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [stickerPopoverOpen, setStickerPopoverOpen] = useState(false);
   const [text, setText] = useState("");
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
+  const [raisedHand, setRaisedHand] = useState(false);
   const [joined, setJoined] = useState(false);
   const [waitingRoom, setWaitingRoom] = useState(false);
   const [isHost, setIsHost] = useState(false);
@@ -62,8 +72,18 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [startsAt, setStartsAt] = useState<string | null>(null);
   const [countdownMs, setCountdownMs] = useState(0);
-  const [privacyMode, setPrivacyMode] = useState<"public" | "private">("private");
-  const [updatingPrivacy, setUpdatingPrivacy] = useState(false);
+  const [showWhiteboard, setShowWhiteboard] = useState(false);
+  const [brushColor, setBrushColor] = useState("#000000");
+  const [brushSize, setBrushSize] = useState(4);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isDrawingRef = useRef(false);
+  const prevCoordsRef = useRef({ x: 0, y: 0 });
+  const [isRecording, setIsRecording] = useState(false);
+  const [layoutMode, setLayoutMode] = useState<"grid" | "focus">("grid");
+  const [focusSocketId, setFocusSocketId] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
 
   const isHostLike = isHost || isCoHost;
 
@@ -184,14 +204,25 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
 
   useEffect(() => {
     http
-      .get(`/meetings/${meetingId}`, {
+      .get(`/meetings/${meetingId}/details`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       })
       .then((response) => {
-        if (response.data?.privacyMode === "public" || response.data?.privacyMode === "private") {
-          setPrivacyMode(response.data.privacyMode);
+        // No privacy mode settings needed locally
+        if (Array.isArray(response.data?.messages)) {
+          const loadedMessages = response.data.messages.map((m: any) => ({
+            id: m._id || crypto.randomUUID(),
+            sender: m.senderName || "Unknown",
+            message: m.message || undefined,
+            fileData: m.fileData || undefined,
+            fileName: m.fileName || undefined,
+            fileType: m.fileType || undefined,
+            sticker: m.sticker || undefined,
+            createdAt: m.createdAt || new Date().toISOString(),
+          }));
+          setMessages(loadedMessages);
         }
       })
       .catch(() => undefined);
@@ -255,7 +286,11 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
 
     socket.on("meeting:join-denied", ({ reason }) => {
       message.error(reason ?? "Không thể tham gia room");
-      navigate("/dashboard");
+      if (onLeave) {
+        onLeave();
+      } else {
+        navigate("/dashboard");
+      }
     });
 
     socket.on("meeting:participants-updated", (items: ParticipantState[]) => {
@@ -292,14 +327,27 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
       message.success("Bạn đã được assign làm co-host");
     });
 
+    socket.on("meeting:hand-lowered", () => {
+      setRaisedHand(false);
+      message.info("Host đã hạ tay của bạn");
+    });
+
     socket.on("meeting:removed", ({ reason }) => {
       message.warning(reason ?? "Bạn đã bị remove khỏi meeting");
-      navigate("/dashboard");
+      if (onLeave) {
+        onLeave();
+      } else {
+        navigate("/dashboard");
+      }
     });
 
     socket.on("meeting:ended", () => {
       message.info("Meeting đã được kết thúc bởi host");
-      navigate("/dashboard");
+      if (onLeave) {
+        onLeave();
+      } else {
+        navigate("/dashboard");
+      }
     });
 
     socket.on("meeting:chat", (payload) => {
@@ -309,9 +357,21 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
           id: crypto.randomUUID(),
           sender: payload.sender,
           message: payload.message,
+          fileData: payload.fileData,
+          fileName: payload.fileName,
+          fileType: payload.fileType,
+          sticker: payload.sticker,
           createdAt: payload.createdAt,
         },
       ]);
+    });
+
+    socket.on("meeting:draw", (payload: any) => {
+      if (payload.isClear) {
+        clearCanvasLocally();
+      } else {
+        drawOnCanvas(payload.prevX, payload.prevY, payload.x, payload.y, payload.color, payload.size);
+      }
     });
 
     socket.on("meeting:webrtc-offer", async ({ fromSocketId, offer }) => {
@@ -405,18 +465,42 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
     return new Map(participants.map((item) => [item.socketId, item.name]));
   }, [participants]);
 
-  const sendMessage = () => {
-    if (!text.trim()) {
+  const handleFullscreen = (e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    const btn = e.currentTarget as HTMLElement;
+    const card = btn.closest(".video-card");
+    const video = card?.querySelector("video");
+    if (video) {
+      if (video.requestFullscreen) {
+        void video.requestFullscreen();
+      } else if ((video as any).webkitRequestFullscreen) {
+        void (video as any).webkitRequestFullscreen();
+      } else if ((video as any).msRequestFullscreen) {
+        void (video as any).msRequestFullscreen();
+      }
+    }
+  };
+
+  const sendMessage = (customText?: string, fileData?: string, fileName?: string, fileType?: string, sticker?: string) => {
+    const activeText = customText !== undefined ? customText : text;
+    if (!activeText.trim() && !fileData && !sticker) {
       return;
     }
 
     socketRef.current?.emit("meeting:chat", {
       meetingId,
       sender: user.fullName,
-      message: text,
+      userId: user.id,
+      message: activeText.trim() || undefined,
+      fileData,
+      fileName,
+      fileType,
+      sticker,
     });
 
-    setText("");
+    if (customText === undefined) {
+      setText("");
+    }
   };
 
   const toggleMic = (nextState: boolean) => {
@@ -443,6 +527,176 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
       micOn,
       cameraOn: nextState,
     });
+  };
+
+  const toggleHandRaise = (nextState: boolean) => {
+    setRaisedHand(nextState);
+    socketRef.current?.emit("meeting:participant-state", {
+      meetingId,
+      micOn,
+      cameraOn,
+      raisedHand: nextState,
+    });
+  };
+
+  const raisedHandQueue = useMemo(() => {
+    const queue: { name: string; socketId?: string; userId: string; raisedHandTime: string }[] = [];
+
+    if (raisedHand) {
+      queue.push({
+        name: `${user.fullName} (Bạn)`,
+        userId: user.id,
+        raisedHandTime: new Date().toISOString(),
+      });
+    }
+
+    participants.forEach((p) => {
+      if (p.raisedHand && p.raisedHandTime) {
+        queue.push({
+          name: p.name,
+          socketId: p.socketId,
+          userId: p.userId,
+          raisedHandTime: p.raisedHandTime,
+        });
+      }
+    });
+
+    return queue.sort((a, b) => new Date(a.raisedHandTime).getTime() - new Date(b.raisedHandTime).getTime());
+  }, [raisedHand, participants, user.fullName, user.id]);
+
+  const drawOnCanvas = (prevX: number, prevY: number, x: number, y: number, color: string, size: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.moveTo(prevX, prevY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.closePath();
+  };
+
+  const clearCanvasLocally = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    isDrawingRef.current = true;
+    prevCoordsRef.current = { x, y };
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawingRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const prev = prevCoordsRef.current;
+
+    drawOnCanvas(prev.x, prev.y, x, y, brushColor, brushSize);
+
+    socketRef.current?.emit("meeting:draw", {
+      meetingId,
+      prevX: prev.x,
+      prevY: prev.y,
+      x,
+      y,
+      color: brushColor,
+      size: brushSize,
+    });
+
+    prevCoordsRef.current = { x, y };
+  };
+
+  const handleCanvasMouseUpOrLeave = () => {
+    isDrawingRef.current = false;
+  };
+
+  const emitClearCanvas = () => {
+    clearCanvasLocally();
+    socketRef.current?.emit("meeting:draw", {
+      meetingId,
+      isClear: true,
+    });
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+
+      recordingStreamRef.current = stream;
+      recordedChunksRef.current = [];
+
+      const options = { mimeType: "video/webm; codecs=vp9" };
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, {
+          type: "video/webm",
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        document.body.appendChild(a);
+        a.style.display = "none";
+        a.href = url;
+        a.download = `gg-meet-record-${meetingId}-${new Date().toISOString()}.webm`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        stream.getTracks().forEach((track) => track.stop());
+        setIsRecording(false);
+        message.success("Đã lưu video ghi hình cuộc họp về thiết bị");
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start(1000);
+      setIsRecording(true);
+      message.success("Bắt đầu ghi hình cuộc họp. Vui lòng chia sẻ màn hình/tab cuộc họp kèm âm thanh.");
+
+      stream.getVideoTracks()[0].onended = () => {
+        if (recorder.state !== "inactive") {
+          recorder.stop();
+        }
+      };
+    } catch {
+      message.warning("Không thể kích hoạt ghi hình cuộc họp");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
   };
 
   const shareScreen = async () => {
@@ -494,35 +748,10 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
   };
 
   const leaveMeeting = () => {
-    navigate("/dashboard");
-  };
-
-  const updatePrivacyMode = async (nextMode: "public" | "private") => {
-    if (!isHost) {
-      return;
-    }
-
-    const previous = privacyMode;
-    setPrivacyMode(nextMode);
-    setUpdatingPrivacy(true);
-
-    try {
-      await http.patch(
-        `/meetings/${meetingId}/privacy`,
-        { privacyMode: nextMode },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      message.success(`Meeting switched to ${nextMode}`);
-    } catch {
-      setPrivacyMode(previous);
-      message.error("Không cập nhật được quyền Public/Private");
-    } finally {
-      setUpdatingPrivacy(false);
+    if (onLeave) {
+      onLeave();
+    } else {
+      navigate("/dashboard");
     }
   };
 
@@ -537,131 +766,56 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
       .join(":");
   };
 
-  if (waitingRoom) {
-    return <Alert type="info" showIcon message="Bạn đang ở waiting room" description="Chờ host phê duyệt để vào phòng họp." />;
-  }
-
-  if (startsAt && countdownMs > 0) {
-    return (
-      <Alert
-        type="info"
-        showIcon
-        message="Cuộc họp chưa bắt đầu"
-        description={`Thời gian còn lại: ${formatCountdown(countdownMs)} (bắt đầu lúc ${new Date(startsAt).toLocaleString()})`}
-      />
-    );
-  }
-
-  return (
-    <Row gutter={[16, 16]}>
-      <Col xs={24} lg={sideCollapsed ? 24 : 16}>
-        <Card
-          title={`Meeting Room: ${meetingId}`}
-          extra={
-            <Space>
-              <Select
-                value={privacyMode}
-                disabled={!isHost}
-                loading={updatingPrivacy}
-                style={{ width: 120 }}
-                options={[
-                  { value: "private", label: "Private" },
-                  { value: "public", label: "Public" },
-                ]}
-                onChange={(value) => void updatePrivacyMode(value as "public" | "private")}
-              />
-              {isHost && (
-                <Button danger icon={<StopOutlined />} onClick={endMeeting}>
-                  Cancel Meeting
-                </Button>
-              )}
-              {!isHost && <Button onClick={leaveMeeting}>Leave Meeting</Button>}
-            </Space>
-          }
-        >
-          {!joined && <Alert type="warning" showIcon message="Đang kết nối room..." style={{ marginBottom: 12 }} />}
-
-          <div className="video-grid">
-            <div className="video-card">
-              <Typography.Text strong>You ({user.fullName})</Typography.Text>
-              <video ref={localVideoRef} autoPlay muted playsInline className="meeting-video" />
-            </div>
-
-            {Object.entries(remoteStreams).map(([socketId, stream]) => (
-              <div className="video-card" key={socketId}>
-                <Typography.Text strong>{participantNameBySocket.get(socketId) ?? "Participant"}</Typography.Text>
-                <video
-                  autoPlay
-                  playsInline
-                  className="meeting-video"
-                  ref={(node) => {
-                    if (node) {
-                      node.srcObject = stream;
-                    }
-                  }}
+  const tabItems = useMemo(() => {
+    const items: any[] = [
+      {
+        key: "participants",
+        label: `Participants (${participants.length + 1})`,
+        children: (
+          <div>
+            {raisedHandQueue.length > 0 && (
+              <div style={{ marginBottom: 16, border: "1px solid #ffe58f", background: "#fffbe6", padding: 8, borderRadius: 8 }}>
+                <Typography.Title level={5} style={{ color: "#d48806", margin: "0 0 8px 0", display: "flex", alignItems: "center", gap: 8, fontSize: "14px" }}>
+                  <span>✋</span> Hàng đợi phát biểu ({raisedHandQueue.length})
+                </Typography.Title>
+                <List
+                  size="small"
+                  dataSource={raisedHandQueue}
+                  renderItem={(item, index) => (
+                    <List.Item
+                      style={{ padding: "4px 0" }}
+                      actions={
+                        isHostLike && item.socketId
+                          ? [
+                              <Button
+                                key="lower-hand"
+                                size="small"
+                                type="text"
+                                danger
+                                onClick={() =>
+                                  socketRef.current?.emit("meeting:host-lower-hand", {
+                                    meetingId,
+                                    targetSocketId: item.socketId,
+                                    actorUserId: user.id,
+                                  })
+                                }
+                              >
+                                Hạ tay
+                              </Button>,
+                            ]
+                          : []
+                      }
+                    >
+                      <Typography.Text strong>
+                        {index + 1}. {item.name}
+                      </Typography.Text>
+                    </List.Item>
+                  )}
                 />
               </div>
-            ))}
-          </div>
+            )}
 
-          <Space style={{ marginTop: 16 }} wrap>
-            <Switch checked={micOn} checkedChildren={<AudioOutlined />} unCheckedChildren={<AudioMutedOutlined />} onChange={toggleMic} />
-            <Switch checked={cameraOn} checkedChildren={<VideoCameraOutlined />} unCheckedChildren={<VideoCameraAddOutlined />} onChange={toggleCamera} />
-            <Button icon={<VideoCameraAddOutlined />} onClick={() => void shareScreen()}>
-              Share Screen
-            </Button>
-          </Space>
-        </Card>
-      </Col>
-
-      <Col xs={24} lg={8} style={{ display: sideCollapsed ? "none" : undefined }}>
-        <div style={{ position: "relative", marginBottom: 16 }}>
-          <Card
-            title="Meeting Side Panel"
-            extra={
-              <Button
-                type="text"
-                icon={sideCollapsed ? <LeftOutlined /> : <RightOutlined />}
-                onClick={handleSideCollapse}
-                style={{ marginLeft: 8 }}
-              />
-            }
-            style={{
-              transition: "transform 0.3s cubic-bezier(.4,0,.2,1)",
-              transform: sideCollapsed ? "translateX(100%)" : "none",
-              position: "relative",
-              zIndex: 2,
-              minHeight: 600,
-            }}
-            bodyStyle={{ display: sideCollapsed ? "none" : undefined }}
-          >
-                  {/* Nút nổi khi panel đã thu nhỏ: mở lại panel và rời phòng */}
-                  {sideCollapsed && (
-                    <Button
-                      type="primary"
-                      shape="circle"
-                      icon={<RightOutlined style={{ fontSize: 28 }} />}
-                      onClick={handleSideCollapse}
-                      style={{
-                        position: "fixed",
-                        top: "50%",
-                        right: 0,
-                        zIndex: 9999,
-                        transform: "translateY(-50%)",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
-                        width: 56,
-                        height: 56,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: "#1677ff",
-                        border: "none",
-                      }}
-                      size="large"
-                    />
-                  )}
             <div style={{ marginBottom: 16 }}>
-              <Typography.Title level={5}>Participants</Typography.Title>
               <List
                 size="small"
                 dataSource={participants}
@@ -669,7 +823,9 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
                 renderItem={(participant) => (
                   <List.Item>
                     <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
-                      <Typography.Text strong>{participant.name}</Typography.Text>
+                      <Typography.Text strong>
+                        {participant.name} {participant.raisedHand && <span style={{ color: "#d48806", marginLeft: 4 }}>✋</span>}
+                      </Typography.Text>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
                         <Tag color={participant.micOn ? "green" : "red"}>{participant.micOn ? "Mic" : "Muted"}</Tag>
                         <Tag color={participant.cameraOn ? "blue" : "default"}>{participant.cameraOn ? "Cam" : "Cam Off"}</Tag>
@@ -711,67 +867,614 @@ export const MeetingRoomPage = ({ token, user }: MeetingRoomPageProps) => {
                 )}
               />
             </div>
-            {isHostLike && (
-              <div style={{ marginBottom: 16 }}>
-                <Typography.Title level={5}>Waiting Room</Typography.Title>
-                <List
-                  size="small"
-                  dataSource={waitingParticipants}
-                  locale={{ emptyText: "Không có ai chờ" }}
-                  renderItem={(participant) => (
-                    <List.Item
-                      actions={[
-                        <Button
-                          key="approve"
-                          type="link"
-                          onClick={() =>
-                            socketRef.current?.emit("meeting:host-approve", {
-                              meetingId,
-                              actorUserId: user.id,
-                              targetSocketId: participant.socketId,
-                            })
-                          }
-                        >
-                          Approve
-                        </Button>,
-                        <Button
-                          key="reject"
-                          danger
-                          type="link"
-                          onClick={() =>
-                            socketRef.current?.emit("meeting:host-reject", {
-                              meetingId,
-                              actorUserId: user.id,
-                              targetSocketId: participant.socketId,
-                            })
-                          }
-                        >
-                          Reject
-                        </Button>,
-                      ]}
+          </div>
+        ),
+      },
+    ];
+
+    if (isHostLike) {
+      items.push({
+        key: "waiting",
+        label: `Waiting Room (${waitingParticipants.length})`,
+        children: (
+          <div style={{ marginBottom: 16 }}>
+            <List
+              size="small"
+              dataSource={waitingParticipants}
+              locale={{ emptyText: "Không có ai chờ" }}
+              renderItem={(participant) => (
+                <List.Item
+                  actions={[
+                    <Button
+                      key="approve"
+                      type="link"
+                      onClick={() =>
+                        socketRef.current?.emit("meeting:host-approve", {
+                          meetingId,
+                          actorUserId: user.id,
+                          targetSocketId: participant.socketId,
+                        })
+                      }
                     >
-                      <Typography.Text>{participant.name}</Typography.Text>
-                    </List.Item>
+                      Approve
+                    </Button>,
+                    <Button
+                      key="reject"
+                      danger
+                      type="link"
+                      onClick={() =>
+                        socketRef.current?.emit("meeting:host-reject", {
+                          meetingId,
+                          actorUserId: user.id,
+                          targetSocketId: participant.socketId,
+                        })
+                      }
+                    >
+                      Reject
+                    </Button>,
+                  ]}
+                >
+                  <Typography.Text>{participant.name}</Typography.Text>
+                </List.Item>
+              )}
+            />
+          </div>
+        ),
+      });
+    }
+
+    items.push({
+      key: "chat",
+      label: `Chat`,
+      children: (
+        <div>
+          <List
+            size="small"
+            dataSource={sortedMessages}
+            locale={{ emptyText: "Chưa có tin nhắn" }}
+            renderItem={(item) => (
+              <List.Item style={{ padding: "8px 0" }}>
+                <div style={{ width: "100%" }}>
+                  <Typography.Text strong>{item.sender}: </Typography.Text>
+                  {item.message && <Typography.Text style={{ display: "block", marginTop: 2 }}>{item.message}</Typography.Text>}
+                  
+                  {item.fileData && (
+                    <div style={{ marginTop: 6 }}>
+                      {item.fileType?.startsWith("image/") ? (
+                        <img
+                          src={item.fileData}
+                          alt={item.fileName ?? "attachment"}
+                          style={{ maxWidth: "100%", maxHeight: 150, borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)" }}
+                        />
+                      ) : (
+                        <a href={item.fileData} download={item.fileName || "file"} style={{ color: "#1677ff", textDecoration: "underline", fontSize: 12 }}>
+                          📁 Download: {item.fileName || "attachment"}
+                        </a>
+                      )}
+                    </div>
                   )}
-                />
+
+                  {item.sticker && (
+                    <div style={{ fontSize: 40, marginTop: 4 }}>
+                      {item.sticker}
+                    </div>
+                  )}
+                </div>
+              </List.Item>
+            )}
+            style={{ minHeight: 180, maxHeight: 400, overflowY: "auto" }}
+          />
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Popover
+                open={stickerPopoverOpen}
+                onOpenChange={setStickerPopoverOpen}
+                content={
+                  <Space wrap style={{ width: 220 }}>
+                    {["🐱", "🐶", "🚀", "🎉", "👍", "❤️", "😂", "😮", "🔥", "💯", "👏", "💩"].map((st) => (
+                      <Button
+                        key={st}
+                        type="text"
+                        onClick={() => {
+                          setStickerPopoverOpen(false);
+                          sendMessage("", undefined, undefined, undefined, st);
+                        }}
+                        style={{ fontSize: 24, padding: 4, width: 40, height: 40 }}
+                      >
+                        {st}
+                      </Button>
+                    ))}
+                  </Space>
+                }
+                title="Chọn Nhãn Dán"
+                trigger="click"
+              >
+                <Button size="small" icon={<span>😊</span>} style={{ borderRadius: 6 }}>Nhãn dán</Button>
+              </Popover>
+
+              <input
+                type="file"
+                id="meeting-file-picker"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (evt) => {
+                    const base64 = evt.target?.result as string;
+                    sendMessage("", base64, file.name, file.type);
+                  };
+                  reader.readAsDataURL(file);
+                  e.target.value = "";
+                }}
+              />
+              <Button
+                size="small"
+                icon={<span>📎</span>}
+                onClick={() => document.getElementById("meeting-file-picker")?.click()}
+                style={{ borderRadius: 6 }}
+              >
+                Gửi File
+              </Button>
+            </div>
+            
+            <Input.Search
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              onSearch={() => sendMessage()}
+              enterButton="Gửi"
+              placeholder="Nhập tin nhắn..."
+              style={{ borderRadius: 6 }}
+            />
+          </div>
+        </div>
+      ),
+    });
+
+    return items;
+  }, [
+    participants,
+    raisedHandQueue,
+    isHostLike,
+    waitingParticipants,
+    sortedMessages,
+    text,
+    user.fullName,
+    user.id,
+    meetingId,
+  ]);
+
+  if (waitingRoom) {
+    return <Alert type="info" showIcon message="Bạn đang ở waiting room" description="Chờ host phê duyệt để vào phòng họp." />;
+  }
+
+  if (startsAt && countdownMs > 0) {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="Cuộc họp chưa bắt đầu"
+        description={`Thời gian còn lại: ${formatCountdown(countdownMs)} (bắt đầu lúc ${new Date(startsAt).toLocaleString()})`}
+      />
+    );
+  }
+
+  if (isMinimized) {
+    const firstRemoteSocketId = Object.keys(remoteStreams)[0];
+    const firstRemoteStream = firstRemoteSocketId ? remoteStreams[firstRemoteSocketId] : null;
+    const activeName = firstRemoteSocketId ? (participantNameBySocket.get(firstRemoteSocketId) ?? "Participant") : `You (${user.fullName})`;
+
+    return (
+      <div style={{
+        position: "relative",
+        width: "100%",
+        height: "100%",
+        background: "#0b0f17",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        padding: 8
+      }}>
+        <div style={{ position: "relative", flex: 1, borderRadius: 10, overflow: "hidden", background: "#121824", border: "1px solid rgba(255,255,255,0.06)" }}>
+          {firstRemoteStream ? (
+            <video
+              autoPlay
+              playsInline
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              ref={(node) => {
+                if (node) {
+                  node.srcObject = firstRemoteStream;
+                }
+              }}
+            />
+          ) : (
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          )}
+          <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", background: "rgba(0,0,0,0.5)", borderRadius: 6, color: "#fff", fontSize: 11 }}>
+            {activeName}
+          </div>
+        </div>
+
+        <div style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 12,
+          marginTop: 8,
+          background: "rgba(255,255,255,0.04)",
+          padding: "6px 12px",
+          borderRadius: 8
+        }}>
+          <Button
+            type="text"
+            shape="circle"
+            icon={micOn ? <span>🎙️</span> : <span style={{ color: "#ff4d4f" }}>🔇</span>}
+            onClick={() => toggleMic(!micOn)}
+            style={{ color: "#fff", background: micOn ? "rgba(255,255,255,0.12)" : "rgba(255,77,79,0.2)" }}
+          />
+          <Button
+            type="text"
+            shape="circle"
+            icon={cameraOn ? <span>📷</span> : <span style={{ color: "#ff4d4f" }}>❌</span>}
+            onClick={() => toggleCamera(!cameraOn)}
+            style={{ color: "#fff", background: cameraOn ? "rgba(255,255,255,0.12)" : "rgba(255,77,79,0.2)" }}
+          />
+          <Button
+            type="primary"
+            shape="circle"
+            icon={<span>🗖</span>}
+            onClick={onMaximize}
+            style={{ background: "#1677ff" }}
+          />
+          <Button
+            danger
+            type="primary"
+            shape="circle"
+            icon={<span>🛑</span>}
+            onClick={onLeave || leaveMeeting}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Row gutter={[16, 16]}>
+      <Col xs={24} lg={sideCollapsed ? 24 : 16}>
+        <Card
+          title={<span style={{ color: "#ffffff" }}>Meeting Room: {meetingId}</span>}
+          extra={
+            <Space>
+              <Select
+                value={layoutMode}
+                onChange={(val) => {
+                  setLayoutMode(val);
+                  if (val === "grid") setFocusSocketId(null);
+                }}
+                getPopupContainer={(triggerNode) => triggerNode.parentNode}
+                style={{ width: 140 }}
+                options={[
+                  { value: "grid", label: "Bố cục ô lưới" },
+                  { value: "focus", label: "Tiêu điểm (Focus)" }
+                ]}
+              />
+              {isHost && (
+                <Button danger icon={<StopOutlined />} onClick={endMeeting}>
+                  Cancel Meeting
+                </Button>
+              )}
+              {!isHost && <Button onClick={onLeave || leaveMeeting}>Leave Meeting</Button>}
+            </Space>
+          }
+          style={{ background: "#0b0f17", borderColor: "rgba(255,255,255,0.08)" }}
+          bodyStyle={{ padding: 12 }}
+        >
+          {!joined && <Alert type="warning" showIcon message="Đang kết nối room..." style={{ marginBottom: 12 }} />}
+          {isRecording && (
+            <Alert
+              type="error"
+              message={<span style={{ fontWeight: "bold" }}>🔴 Đang ghi hình cuộc họp...</span>}
+              style={{ marginBottom: 12 }}
+            />
+          )}
+
+          <div className="meeting-stage">
+            {showWhiteboard ? (
+              <div style={{ background: "#121824", padding: 16, borderRadius: 12, textAlign: "center", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <Space wrap>
+                    <span style={{ fontWeight: "bold", color: "#ffffff" }}>Màu bút: </span>
+                    {["#ffffff", "#ff4d4f", "#1890ff", "#52c41a"].map((color) => (
+                      <Button
+                        key={color}
+                        shape="circle"
+                        style={{
+                          background: color === "#ffffff" ? "#ffffff" : color,
+                          border: brushColor === color ? "2px solid #52c41a" : "none",
+                          width: 24,
+                          height: 24,
+                          padding: 0,
+                          cursor: "pointer",
+                        }}
+                        onClick={() => setBrushColor(color)}
+                      />
+                    ))}
+                    <span style={{ fontWeight: "bold", marginLeft: 16, color: "#ffffff" }}>Cỡ bút: </span>
+                    <Select
+                      value={brushSize}
+                      onChange={setBrushSize}
+                      style={{ width: 80 }}
+                      options={[
+                        { value: 2, label: "2px" },
+                        { value: 4, label: "4px" },
+                        { value: 6, label: "6px" },
+                        { value: 10, label: "10px" },
+                      ]}
+                    />
+                  </Space>
+                  <Button danger onClick={emitClearCanvas}>Xóa bảng</Button>
+                </div>
+                <div style={{ background: "#ffffff", border: "1px solid #d9d9d9", borderRadius: 8, display: "inline-block", cursor: "crosshair" }}>
+                  <canvas
+                    ref={canvasRef}
+                    width={800}
+                    height={500}
+                    onMouseDown={handleCanvasMouseDown}
+                    onMouseMove={handleCanvasMouseMove}
+                    onMouseUp={handleCanvasMouseUpOrLeave}
+                    onMouseLeave={handleCanvasMouseUpOrLeave}
+                    style={{ display: "block", maxWidth: "100%", height: "auto" }}
+                  />
+                </div>
+              </div>
+            ) : layoutMode === "grid" ? (
+              <div className="video-grid">
+                <div className="video-card">
+                  <video ref={localVideoRef} autoPlay muted playsInline className="meeting-video" />
+                  <div className="video-overlay-name">
+                    <span>You ({user.fullName})</span>
+                  </div>
+                  <div style={{ position: "absolute", top: 12, right: 12, zIndex: 10 }}>
+                    <Button
+                      type="text"
+                      shape="circle"
+                      icon={<span>⛶</span>}
+                      onClick={handleFullscreen}
+                      style={{ color: "#fff", background: "rgba(0,0,0,0.5)", border: "none" }}
+                    />
+                  </div>
+                  <div className="video-overlay-status">
+                    <div className="video-status-badge" style={{ borderColor: micOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
+                      {micOn ? <span>🎙️</span> : <span style={{ color: "#ff4d4f" }}>🔇</span>}
+                    </div>
+                    <div className="video-status-badge" style={{ borderColor: cameraOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
+                      {cameraOn ? <span>📷</span> : <span style={{ color: "#ff4d4f" }}>❌</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {Object.entries(remoteStreams).map(([socketId, stream]) => {
+                  const name = participantNameBySocket.get(socketId) ?? "Participant";
+                  const pState = participants.find((item) => item.socketId === socketId);
+                  const pMicOn = pState ? pState.micOn : true;
+                  const pCameraOn = pState ? pState.cameraOn : true;
+                  const pRaisedHand = pState ? pState.raisedHand : false;
+
+                  return (
+                    <div className="video-card" key={socketId}>
+                      <video
+                        autoPlay
+                        playsInline
+                        className="meeting-video"
+                        ref={(node) => {
+                          if (node) {
+                            node.srcObject = stream;
+                          }
+                        }}
+                      />
+                      <div className="video-overlay-name">
+                        <span>{name}</span>
+                        {pRaisedHand && <span style={{ color: "#ffe58f" }}>✋</span>}
+                      </div>
+                      <div style={{ position: "absolute", top: 12, right: 12, zIndex: 10 }}>
+                        <Button
+                          type="text"
+                          shape="circle"
+                          icon={<span>⛶</span>}
+                          onClick={handleFullscreen}
+                          style={{ color: "#fff", background: "rgba(0,0,0,0.5)", border: "none" }}
+                        />
+                      </div>
+                      <div className="video-overlay-status">
+                        <div className="video-status-badge" style={{ borderColor: pMicOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
+                          {pMicOn ? <span>🎙️</span> : <span style={{ color: "#ff4d4f" }}>🔇</span>}
+                        </div>
+                        <div className="video-status-badge" style={{ borderColor: pCameraOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
+                          {pCameraOn ? <span>📷</span> : <span style={{ color: "#ff4d4f" }}>❌</span>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ width: "100%" }}>
+                {(() => {
+                  const activeFocusId = focusSocketId || (Object.keys(remoteStreams)[0] ? Object.keys(remoteStreams)[0] : "local");
+                  const focusRemoteStream = activeFocusId !== "local" ? remoteStreams[activeFocusId] : null;
+                  const focusName = activeFocusId === "local" ? `You (${user.fullName})` : (participantNameBySocket.get(activeFocusId) ?? "Participant");
+
+                  return (
+                    <div className="video-card" style={{ width: "100%", height: 420, position: "relative", borderRadius: 12, overflow: "hidden", background: "#121824", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
+                      {activeFocusId === "local" ? (
+                        <video ref={localVideoRef} autoPlay muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      ) : (
+                        <video
+                          autoPlay
+                          playsInline
+                          style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                          ref={(node) => {
+                            if (node && focusRemoteStream) {
+                              node.srcObject = focusRemoteStream;
+                            }
+                          }}
+                        />
+                      )}
+                      <div className="video-overlay-name">
+                        <span>{focusName}</span>
+                      </div>
+                      <div style={{ position: "absolute", top: 12, right: 12, zIndex: 10 }}>
+                        <Button
+                          type="text"
+                          shape="circle"
+                          icon={<span>⛶</span>}
+                          onClick={handleFullscreen}
+                          style={{ color: "#fff", background: "rgba(0,0,0,0.5)", border: "none" }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div style={{ display: "flex", gap: 12, overflowX: "auto", padding: "8px 4px", background: "rgba(255,255,255,0.02)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.04)" }}>
+                  {focusSocketId !== "local" && (
+                    <div
+                      className="video-card"
+                      style={{ width: 140, height: 100, flexShrink: 0, position: "relative", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)" }}
+                      onClick={() => setFocusSocketId("local")}
+                    >
+                      <video ref={localVideoRef} autoPlay muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      <div style={{ position: "absolute", bottom: 4, left: 4, background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "1px 4px", fontSize: 10, color: "#fff" }}>
+                        You
+                      </div>
+                    </div>
+                  )}
+
+                  {Object.entries(remoteStreams).map(([socketId, stream]) => {
+                    if (focusSocketId === socketId || (focusSocketId === null && socketId === Object.keys(remoteStreams)[0])) return null;
+                    const name = participantNameBySocket.get(socketId) ?? "Participant";
+                    return (
+                      <div
+                        className="video-card"
+                        key={socketId}
+                        style={{ width: 140, height: 100, flexShrink: 0, position: "relative", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)" }}
+                        onClick={() => setFocusSocketId(socketId)}
+                      >
+                        <video
+                          autoPlay
+                          playsInline
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          ref={(node) => {
+                            if (node) {
+                              node.srcObject = stream;
+                            }
+                          }}
+                        />
+                        <div style={{ position: "absolute", bottom: 4, left: 4, background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "1px 4px", fontSize: 10, color: "#fff" }}>
+                          {name}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
-            <div>
-              <Typography.Title level={5}>Realtime Chat</Typography.Title>
-              <List
-                size="small"
-                dataSource={sortedMessages}
-                locale={{ emptyText: "Chưa có tin nhắn" }}
-                renderItem={(item) => (
-                  <List.Item>
-                    <Typography.Text strong>{item.sender}: </Typography.Text>
-                    <Typography.Text>{item.message}</Typography.Text>
-                  </List.Item>
-                )}
-                style={{ minHeight: 180 }}
-              />
-              <Input.Search value={text} onChange={(event) => setText(event.target.value)} onSearch={sendMessage} enterButton="Send" />
+
+            <div className="floating-controls">
+              {onMinimize && (
+                <Button
+                  icon={<span>🗕</span>}
+                  onClick={onMinimize}
+                  style={{ borderRadius: 6 }}
+                >
+                  Thu nhỏ
+                </Button>
+              )}
+              <Switch checked={micOn} checkedChildren={<AudioOutlined />} unCheckedChildren={<AudioMutedOutlined />} onChange={toggleMic} />
+              <Switch checked={cameraOn} checkedChildren={<VideoCameraOutlined />} unCheckedChildren={<VideoCameraAddOutlined />} onChange={toggleCamera} />
+              <Button icon={<VideoCameraAddOutlined />} onClick={() => void shareScreen()}>
+                Share Screen
+              </Button>
+              <Button
+                type={raisedHand ? "primary" : "default"}
+                icon={<span>✋</span>}
+                onClick={() => toggleHandRaise(!raisedHand)}
+              >
+                {raisedHand ? "Hạ tay" : "Giơ tay"}
+              </Button>
+              <Button
+                type={showWhiteboard ? "primary" : "default"}
+                icon={<span>📋</span>}
+                onClick={() => setShowWhiteboard(!showWhiteboard)}
+              >
+                {showWhiteboard ? "Hiện Video" : "Bảng vẽ chung"}
+              </Button>
+              <Button
+                danger={isRecording}
+                type={isRecording ? "primary" : "default"}
+                icon={<span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: isRecording ? "#fff" : "#ff4d4f", marginRight: 4 }} />}
+                onClick={isRecording ? stopRecording : () => void startRecording()}
+              >
+                {isRecording ? "Dừng ghi" : "Ghi hình"}
+              </Button>
             </div>
+          </div>
+        </Card>
+      </Col>
+
+      {sideCollapsed && (
+        <Button
+          type="primary"
+          shape="circle"
+          icon={<RightOutlined style={{ fontSize: 28 }} />}
+          onClick={handleSideCollapse}
+          style={{
+            position: "fixed",
+            top: "50%",
+            right: 0,
+            zIndex: 9999,
+            transform: "translateY(-50%)",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+            width: 56,
+            height: 56,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "#1677ff",
+            border: "none",
+          }}
+          size="large"
+        />
+      )}
+
+      <Col xs={24} lg={8} style={{ display: sideCollapsed ? "none" : undefined }}>
+        <div style={{ position: "relative", marginBottom: 16 }}>
+          <Card
+            title="Meeting Side Panel"
+            extra={
+              <Button
+                type="text"
+                icon={sideCollapsed ? <LeftOutlined /> : <RightOutlined />}
+                onClick={handleSideCollapse}
+                style={{ marginLeft: 8 }}
+              />
+            }
+            style={{
+              transition: "transform 0.3s cubic-bezier(.4,0,.2,1)",
+              transform: sideCollapsed ? "translateX(100%)" : "none",
+              position: "relative",
+              zIndex: 2,
+              minHeight: 600,
+            }}
+            bodyStyle={{ display: sideCollapsed ? "none" : undefined }}
+          >
+            <Tabs defaultActiveKey="participants" items={tabItems} size="small" />
           </Card>
         </div>
       </Col>

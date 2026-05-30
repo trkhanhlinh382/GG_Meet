@@ -20,7 +20,15 @@ const meetingSchema = new mongoose_1.Schema({
     },
     privacyMode: { type: String, enum: ["public", "private"], default: "private" },
     waitingRoomEnabled: { type: Boolean, default: true },
+    recordingEnabled: { type: Boolean, default: false },
+    recordingUrl: { type: String },
     password: { type: String },
+    participants: [{ type: mongoose_1.Schema.Types.ObjectId, ref: "User" }],
+    isRecurring: { type: Boolean, default: false },
+    recurrence: {
+        frequency: { type: String, enum: ["daily", "weekly", "monthly", "none"], default: "none" },
+        endDate: { type: Date },
+    },
 }, { timestamps: true });
 exports.MeetingModel = (0, mongoose_1.model)("Meeting", meetingSchema);
 //# sourceMappingURL=meeting.model.js.map

@@ -85,7 +85,7 @@ invitationRouter.post("/:id/accept", requireAuth, async (req: AuthRequest, res) 
     return;
   }
 
-  const result = await updateInvitationStatus(req.params.id, userId, "accepted");
+  const result = await updateInvitationStatus(req.params.id as string, userId, "accepted");
   if ("notFound" in result) {
     res.status(404).json({ message: "Invitation not found" });
     return;
@@ -116,7 +116,7 @@ invitationRouter.post("/:id/reject", requireAuth, async (req: AuthRequest, res) 
     return;
   }
 
-  const result = await updateInvitationStatus(req.params.id, userId, "rejected");
+  const result = await updateInvitationStatus(req.params.id as string, userId, "rejected");
   if ("notFound" in result) {
     res.status(404).json({ message: "Invitation not found" });
     return;
@@ -137,7 +137,7 @@ invitationRouter.post("/:id/maybe", requireAuth, async (req: AuthRequest, res) =
     return;
   }
 
-  const result = await updateInvitationStatus(req.params.id, userId, "maybe");
+  const result = await updateInvitationStatus(req.params.id as string, userId, "maybe");
   if ("notFound" in result) {
     res.status(404).json({ message: "Invitation not found" });
     return;

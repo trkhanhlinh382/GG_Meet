@@ -1,8 +1,8 @@
 import { BellOutlined, CalendarOutlined, LogoutOutlined, ScheduleOutlined, VideoCameraOutlined } from "@ant-design/icons";
 import type { AxiosError } from "axios";
-import { Avatar, Button, Layout, Menu, Space, Spin, Typography, message, Popover, List, Badge } from "antd";
+import { Avatar, Button, Layout, Menu, Spin, Typography, message, Popover, List, Badge } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { http, setAuthToken } from "./api/http";
 import type { DashboardPayload, Notification } from "./api/types";
 import { markNotificationAsRead, fetchNotifications } from "./api/notifications";
@@ -34,6 +34,7 @@ interface CreateMeetingInput {
   endTime: string;
   privacyMode: "public" | "private";
   waitingRoomEnabled: boolean;
+  isInstant?: boolean;
 }
 
 const getStoredToken = (): string | null => localStorage.getItem("gg_meet_access_token");
@@ -80,9 +81,32 @@ const extractMeetingId = (raw: string): string | null => {
   return trimmed;
 };
 
+const RoomPlaceholderRoute = ({ setActiveCallRoomId, setIsCallMinimized }: { setActiveCallRoomId: (id: string | null) => void; setIsCallMinimized: (min: boolean) => void }) => {
+  const { id } = useParams();
+
+  useEffect(() => {
+    if (id) {
+      setActiveCallRoomId(id);
+      setIsCallMinimized(false);
+    }
+  }, [id, setActiveCallRoomId, setIsCallMinimized]);
+
+  return (
+    <div style={{ display: "flex", flex: 1, height: "100%", alignItems: "center", justifyContent: "center", background: "#0b0f17", color: "#9ca3af", borderRadius: 12, minHeight: 450 }}>
+      <div style={{ textAlign: "center" }}>
+        <Spin size="large" />
+        <div style={{ marginTop: 16, fontSize: 14 }}>Đang kết nối vào phòng họp...</div>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
+
+  const [activeCallRoomId, setActiveCallRoomId] = useState<string | null>(null);
+  const [isCallMinimized, setIsCallMinimized] = useState<boolean>(false);
 
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [user, setUser] = useState<SessionUser | null>(getStoredUser());
@@ -264,9 +288,20 @@ function App() {
 
       navigate(`/room/${meetingId}`);
     } catch (error) {
-      const axiosError = error as AxiosError<{ message?: string }>;
+      const axiosError = error as AxiosError<{ message?: string; invitationId?: string }>;
       if (axiosError.response?.status === 404) {
         message.error("Link/Meeting ID không tồn tại");
+        return;
+      }
+
+      if (axiosError.response?.status === 403) {
+        const data = axiosError.response.data;
+        if (data?.invitationId) {
+          message.info(data.message || "Vui lòng chấp nhận lời mời để tham gia cuộc họp.");
+          navigate(`/invitations/${data.invitationId}`);
+          return;
+        }
+        message.error(data?.message || "Cuộc họp riêng tư: Chỉ người được mời mới có thể tham gia.");
         return;
       }
 
@@ -430,12 +465,64 @@ function App() {
               />
               <Route path="/meetings/:id" element={user ? <MeetingDetailPage token={token} user={user} /> : <Navigate to="/login" replace />} />
               <Route path="/invitations/:id" element={user ? <InvitationDetailPage onJoinMeeting={joinByLink} /> : <Navigate to="/login" replace />} />
-              <Route path="/room/:id" element={user ? <MeetingRoomPage token={token} user={user} /> : <Navigate to="/login" replace />} />
+              <Route path="/room/:id" element={user ? <RoomPlaceholderRoute setActiveCallRoomId={setActiveCallRoomId} setIsCallMinimized={setIsCallMinimized} /> : <Navigate to="/login" replace />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           )}
         </Content>
       </Layout>
+      {activeCallRoomId && user && token && (
+        <div
+          style={
+            isCallMinimized
+              ? {
+                  position: "fixed",
+                  right: 24,
+                  bottom: 24,
+                  width: 320,
+                  height: 240,
+                  zIndex: 9999,
+                  background: "rgba(11, 15, 23, 0.95)",
+                  borderRadius: 16,
+                  overflow: "hidden",
+                  boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  transition: "all 0.3s cubic-bezier(.4,0,.2,1)",
+                }
+              : {
+                  position: "fixed",
+                  left: 0,
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  zIndex: 2000,
+                  background: "#0b0f17",
+                  transition: "all 0.3s cubic-bezier(.4,0,.2,1)",
+                  overflow: "auto",
+                }
+          }
+        >
+          <MeetingRoomPage
+            token={token}
+            user={user}
+            roomId={activeCallRoomId}
+            isMinimized={isCallMinimized}
+            onMinimize={() => {
+              setIsCallMinimized(true);
+              navigate("/dashboard");
+            }}
+            onMaximize={() => {
+              setIsCallMinimized(false);
+              navigate(`/room/${activeCallRoomId}`);
+            }}
+            onLeave={() => {
+              setActiveCallRoomId(null);
+              setIsCallMinimized(false);
+              navigate("/meetings");
+            }}
+          />
+        </div>
+      )}
     </Layout>
   );
 }

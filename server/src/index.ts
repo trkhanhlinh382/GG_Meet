@@ -17,6 +17,8 @@ const bootstrap = async (): Promise<void> => {
     },
   });
 
+  app.set("io", io);
+
   registerMeetingRealtime(io);
   startReminderScheduler();
 

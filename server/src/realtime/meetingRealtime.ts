@@ -9,6 +9,8 @@ interface ParticipantState {
   name: string;
   micOn: boolean;
   cameraOn: boolean;
+  raisedHand?: boolean;
+  raisedHandTime?: string;
 }
 
 interface MeetingRoomState {
@@ -52,13 +54,18 @@ interface ParticipantStatePayload {
   meetingId: string;
   micOn: boolean;
   cameraOn: boolean;
+  raisedHand?: boolean;
 }
 
 interface ChatPayload {
   meetingId: string;
   userId?: string;
-  message: string;
+  message?: string;
   sender: string;
+  fileData?: string;
+  fileName?: string;
+  fileType?: string;
+  sticker?: string;
 }
 
 interface WebRtcOfferPayload {
@@ -95,6 +102,12 @@ export const getMeetingRealtimeSnapshot = (meetingId: string): MeetingRealtimeSn
     waiting: Array.from(state.waiting.values()),
     locked: state.locked,
   };
+};
+
+export const closeRealtimeMeeting = (meetingId: string, io: Server): void => {
+  io.to(meetingId).emit("meeting:ended");
+  rooms.delete(meetingId);
+  io.in(meetingId).socketsLeave(meetingId);
 };
 
 const getRoomState = (meetingId: string, hostUserId: string): MeetingRoomState => {
@@ -296,6 +309,24 @@ export const registerMeetingRealtime = (io: Server): void => {
       io.to(targetSocketId).emit("meeting:cohost-assigned");
     });
 
+    socket.on("meeting:host-lower-hand", (payload: HostActionPayload) => {
+      const { meetingId, targetSocketId, actorUserId } = payload;
+      const state = rooms.get(meetingId);
+      if (!state || !isHostLike(state, actorUserId)) {
+        return;
+      }
+
+      const target = state.participants.get(targetSocketId);
+      if (!target) {
+        return;
+      }
+
+      target.raisedHand = false;
+      target.raisedHandTime = undefined;
+      io.to(targetSocketId).emit("meeting:hand-lowered");
+      io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
+    });
+
     socket.on("meeting:host-end", (payload: HostEndPayload) => {
       const { meetingId, actorUserId } = payload;
       const state = rooms.get(meetingId);
@@ -316,7 +347,7 @@ export const registerMeetingRealtime = (io: Server): void => {
     });
 
     socket.on("meeting:participant-state", (payload: ParticipantStatePayload) => {
-      const { meetingId, micOn, cameraOn } = payload;
+      const { meetingId, micOn, cameraOn, raisedHand } = payload;
       const state = rooms.get(meetingId);
       if (!state) {
         return;
@@ -329,11 +360,17 @@ export const registerMeetingRealtime = (io: Server): void => {
 
       participant.micOn = micOn;
       participant.cameraOn = cameraOn;
+      if (typeof raisedHand === "boolean") {
+        if (raisedHand && !participant.raisedHand) {
+          participant.raisedHandTime = new Date().toISOString();
+        }
+        participant.raisedHand = raisedHand;
+      }
       io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
     });
 
     socket.on("meeting:chat", (payload: ChatPayload) => {
-      const { meetingId, userId, message, sender } = payload;
+      const { meetingId, userId, message, sender, fileData, fileName, fileType, sticker } = payload;
       const createdAt = new Date().toISOString();
 
       void MeetingMessageModel.create({
@@ -341,6 +378,10 @@ export const registerMeetingRealtime = (io: Server): void => {
         senderUserId: userId,
         senderName: sender,
         message,
+        fileData,
+        fileName,
+        fileType,
+        sticker,
         createdAt,
       }).catch(() => undefined);
 
@@ -348,6 +389,10 @@ export const registerMeetingRealtime = (io: Server): void => {
         meetingId,
         message,
         sender,
+        fileData,
+        fileName,
+        fileType,
+        sticker,
         createdAt,
       });
     });
@@ -365,6 +410,11 @@ export const registerMeetingRealtime = (io: Server): void => {
     socket.on("meeting:webrtc-ice", (payload: WebRtcIcePayload) => {
       const { meetingId, toSocketId, candidate, fromSocketId } = payload;
       io.to(toSocketId).emit("meeting:webrtc-ice", { meetingId, candidate, fromSocketId });
+    });
+
+    socket.on("meeting:draw", (payload: any) => {
+      const { meetingId } = payload;
+      socket.to(meetingId).emit("meeting:draw", payload);
     });
 
     socket.on("disconnect", () => {

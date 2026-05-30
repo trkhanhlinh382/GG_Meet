@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx --test src/test/**/*.test.ts",
     "dev": "nodemon --watch src --exec tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js"
@@ -25,6 +25,7 @@
     "mongoose": "^9.6.2",
     "morgan": "^1.10.1",
     "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.10",
     "socket.io": "^4.8.3",
     "zod": "^4.4.3"
   },
@@ -36,6 +37,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/morgan": "^1.9.10",
     "@types/node": "^25.8.0",
+    "@types/nodemailer": "^8.0.0",
     "nodemon": "^3.1.14",
     "tsx": "^4.22.1",
     "typescript": "^6.0.3"

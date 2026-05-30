@@ -13,8 +13,10 @@ const auth_1 = require("./routes/auth");
 const calendar_1 = require("./routes/calendar");
 const dashboard_1 = require("./routes/dashboard");
 const invitations_1 = require("./routes/invitations");
+const meeting_details_1 = require("./routes/meeting-details");
 const meetings_1 = require("./routes/meetings");
 const tasks_1 = require("./routes/tasks");
+const notifications_1 = require("./routes/notifications");
 exports.app = (0, express_1.default)();
 exports.app.use((0, helmet_1.default)());
 exports.app.use((0, cors_1.default)({
@@ -30,6 +32,8 @@ exports.app.use("/api/auth", auth_1.authRouter);
 exports.app.use("/api/dashboard", dashboard_1.dashboardRouter);
 exports.app.use("/api/calendar", calendar_1.calendarRouter);
 exports.app.use("/api/meetings", meetings_1.meetingRouter);
+exports.app.use("/api/meetings", meeting_details_1.meetingDetailsRouter);
 exports.app.use("/api/invitations", invitations_1.invitationRouter);
 exports.app.use("/api/tasks", tasks_1.taskRouter);
+exports.app.use("/api/notifications", notifications_1.notificationRouter);
 //# sourceMappingURL=app.js.map

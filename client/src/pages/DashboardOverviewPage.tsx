@@ -1,5 +1,5 @@
 import { BellOutlined, CalendarOutlined, ClockCircleOutlined, VideoCameraOutlined } from "@ant-design/icons";
-import { Badge, Button, Card, Col, List, Row, Space, Statistic, Tag, Typography } from "antd";
+import { Button, Card, Col, List, Row, Space, Statistic, Tag, Typography } from "antd";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 dayjs.extend(relativeTime);
@@ -28,31 +28,31 @@ export const DashboardOverviewPage = ({ data }: DashboardOverviewPageProps) => {
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
       <Row gutter={[16, 16]}>
         <Col xs={24} md={6}>
-          <Card>
-            <Statistic title="Đang diễn ra" value={ongoing.length} prefix={<VideoCameraOutlined />} />
+          <Card style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }} bodyStyle={{ padding: "16px 24px" }}>
+            <Statistic title={<span style={{ fontWeight: 500, fontSize: 14 }}>Đang diễn ra</span>} value={ongoing.length} prefix={<VideoCameraOutlined style={{ color: "#52c41a", marginRight: 8 }} />} valueStyle={{ fontWeight: 600, color: "#1f2937" }} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
-          <Card>
-            <Statistic title="Sắp diễn ra" value={upcoming.length} prefix={<CalendarOutlined />} />
+          <Card style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }} bodyStyle={{ padding: "16px 24px" }}>
+            <Statistic title={<span style={{ fontWeight: 500, fontSize: 14 }}>Sắp diễn ra</span>} value={upcoming.length} prefix={<CalendarOutlined style={{ color: "#1677ff", marginRight: 8 }} />} valueStyle={{ fontWeight: 600, color: "#1f2937" }} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
-          <Card>
-            <Statistic title="Lời mời chờ phản hồi" value={data?.invitations.length ?? 0} prefix={<ClockCircleOutlined />} />
+          <Card style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }} bodyStyle={{ padding: "16px 24px" }}>
+            <Statistic title={<span style={{ fontWeight: 500, fontSize: 14 }}>Lời mời chờ duyệt</span>} value={data?.invitations.length ?? 0} prefix={<ClockCircleOutlined style={{ color: "#faad14", marginRight: 8 }} />} valueStyle={{ fontWeight: 600, color: "#1f2937" }} />
           </Card>
         </Col>
         <Col xs={24} md={6}>
-          <Card>
-            <Statistic title="Thông báo chưa đọc" value={unreadNotifications} prefix={<BellOutlined />} />
+          <Card style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }} bodyStyle={{ padding: "16px 24px" }}>
+            <Statistic title={<span style={{ fontWeight: 500, fontSize: 14 }}>Thông báo chưa đọc</span>} value={unreadNotifications} prefix={<BellOutlined style={{ color: "#ff4d4f", marginRight: 8 }} />} valueStyle={{ fontWeight: 600, color: "#1f2937" }} />
           </Card>
         </Col>
       </Row>
 
-
       <Card
-        title="Cuộc họp đang diễn ra"
-        extra={null}
+        title={<span style={{ fontSize: 16, fontWeight: 600 }}>Cuộc họp đang diễn ra</span>}
+        style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }}
+        bodyStyle={{ padding: 16 }}
       >
         <List
           dataSource={ongoing.slice(0, 6)}
@@ -64,35 +64,36 @@ export const DashboardOverviewPage = ({ data }: DashboardOverviewPageProps) => {
             const waitMinutes = Math.max(0, start.diff(now, "minute"));
             return (
               <List.Item
+                style={{ padding: "12px 16px", background: "rgba(82, 196, 26, 0.03)", border: "1px solid rgba(82, 196, 26, 0.1)", borderRadius: 8, marginBottom: 8 }}
                 actions={[
-                  <Button
-                    key="join"
-                    type="primary"
-                    disabled={!canJoin}
-                    style={!canJoin ? { opacity: 0.5, pointerEvents: "none" } : {}}
-                    onClick={() => navigate(`/room/${meeting._id}`)}
-                  >
-                    Tham gia
-                  </Button>,
                   <Button key="detail" type="link" onClick={() => navigate(`/meetings/${meeting._id}`)}>
                     Chi tiết
                   </Button>,
                 ]}
               >
                 <List.Item.Meta
-                  title={meeting.title}
+                  title={<Typography.Text strong style={{ fontSize: 14 }}>{meeting.title}</Typography.Text>}
                   description={
-                    <>
-                      {`Host: ${getHostLabel(meeting.ownerId)} • ${dayjs(meeting.startTime).format("DD/MM/YYYY HH:mm")} - ${dayjs(meeting.endTime).format("HH:mm")}`}
+                    <Space direction="vertical" size={2}>
+                      <span style={{ fontSize: 12, color: "#4b5563" }}>
+                        {`Host: ${getHostLabel(meeting.ownerId)} • ${dayjs(meeting.startTime).format("DD/MM/YYYY HH:mm")} - ${dayjs(meeting.endTime).format("HH:mm")}`}
+                      </span>
                       {!canJoin && (
-                        <div style={{ color: "#faad14", fontSize: 12 }}>
-                          Chờ tới giờ bắt đầu ({waitMinutes} phút nữa)
+                        <div style={{ color: "#faad14", fontSize: 11, fontWeight: 500 }}>
+                          ⚠️ Chờ tới giờ bắt đầu ({waitMinutes} phút nữa)
                         </div>
                       )}
-                    </>
+                    </Space>
                   }
                 />
-                <Tag color="green">Ongoing</Tag>
+                <Button
+                  type="primary"
+                  size="small"
+                  style={{ background: "#52c41a", borderColor: "#52c41a", borderRadius: 4 }}
+                  onClick={() => navigate(`/room/${meeting._id}`)}
+                >
+                  Đang diễn ra
+                </Button>
               </List.Item>
             );
           }}
@@ -100,14 +101,17 @@ export const DashboardOverviewPage = ({ data }: DashboardOverviewPageProps) => {
       </Card>
 
       <Card
-        title="Lịch họp sắp tới"
-        extra={<Button type="link" onClick={() => navigate("/schedule")}>Xem calendar</Button>}
+        title={<span style={{ fontSize: 16, fontWeight: 600 }}>Lịch họp sắp tới</span>}
+        extra={<Button type="link" onClick={() => navigate("/schedule")} style={{ fontSize: 13 }}>Xem calendar</Button>}
+        style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }}
+        bodyStyle={{ padding: 16 }}
       >
         <List
           dataSource={upcoming.slice(0, 6)}
           locale={{ emptyText: "Không có lịch họp sắp tới" }}
           renderItem={(meeting) => (
             <List.Item
+              style={{ padding: "12px 16px", border: "1px solid rgba(0,0,0,0.04)", borderRadius: 8, marginBottom: 8, background: "#fafafa" }}
               actions={[
                 <Button key="detail" type="link" onClick={() => navigate(`/meetings/${meeting._id}`)}>
                   Chi tiết
@@ -115,15 +119,18 @@ export const DashboardOverviewPage = ({ data }: DashboardOverviewPageProps) => {
               ]}
             >
               <List.Item.Meta
-                title={meeting.title}
-                description={`Host: ${getHostLabel(meeting.ownerId)} • ${dayjs(meeting.startTime).format("DD/MM/YYYY HH:mm")} - ${dayjs(meeting.endTime).format("HH:mm")}`}
+                title={<Typography.Text strong style={{ fontSize: 14 }}>{meeting.title}</Typography.Text>}
+                description={
+                  <span style={{ fontSize: 12, color: "#4b5563" }}>
+                    {`Host: ${getHostLabel(meeting.ownerId)} • ${dayjs(meeting.startTime).format("DD/MM/YYYY HH:mm")} - ${dayjs(meeting.endTime).format("HH:mm")}`}
+                  </span>
+                }
               />
-              <Tag color="blue">Upcoming</Tag>
+              <Tag color="blue" style={{ borderRadius: 4, padding: "2px 8px" }}>Upcoming</Tag>
             </List.Item>
           )}
         />
       </Card>
-
     </Space>
   );
 };

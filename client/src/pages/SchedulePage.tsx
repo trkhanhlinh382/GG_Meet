@@ -24,23 +24,23 @@ const getMeetingStatus = (meeting: Meeting): "ongoing" | "upcoming" | "ended" =>
 const statusCardStyle = (status: "ongoing" | "upcoming" | "ended") => {
   if (status === "ongoing") {
     return {
-      background: "#f6ffed",
-      border: "1px solid #b7eb8f",
+      background: "rgba(82, 196, 26, 0.05)",
+      border: "1px solid rgba(82, 196, 26, 0.18)",
       color: "#237804",
     };
   }
 
   if (status === "upcoming") {
     return {
-      background: "#e6f4ff",
-      border: "1px solid #91caff",
+      background: "rgba(24, 144, 255, 0.05)",
+      border: "1px solid rgba(24, 144, 255, 0.18)",
       color: "#0958d9",
     };
   }
 
   return {
     background: "#fafafa",
-    border: "1px solid #d9d9d9",
+    border: "1px solid rgba(0, 0, 0, 0.06)",
     color: "#595959",
   };
 };
@@ -77,7 +77,7 @@ export const SchedulePage = () => {
     const items = meetingsByDate.get(value.format("YYYY-MM-DD")) ?? [];
 
     return (
-      <Space direction="vertical" size={6} style={{ width: "100%" }}>
+      <Space direction="vertical" size={4} style={{ width: "100%" }}>
         {items.slice(0, 3).map((item) => {
           const status = getMeetingStatus(item);
           const style = statusCardStyle(status);
@@ -87,19 +87,21 @@ export const SchedulePage = () => {
               size="small"
               hoverable
               onClick={() => navigate(`/meetings/${item._id}`)}
-              bodyStyle={{ padding: "4px 8px" }}
+              bodyStyle={{ padding: "2px 6px" }}
               style={{
                 ...style,
-                borderRadius: 8,
+                borderRadius: 6,
                 cursor: "pointer",
+                boxShadow: "none",
               }}
             >
               <Typography.Text
                 ellipsis={{ tooltip: `${item.title} - ${dayjs(item.startTime).format("HH:mm")} • Host: ${typeof item.ownerId === "object" ? item.ownerId.fullName : "Không rõ host"}` }}
                 style={{
                   display: "block",
-                  fontSize: 12,
-                  lineHeight: "16px",
+                  fontSize: 11,
+                  fontWeight: 500,
+                  lineHeight: "14px",
                   color: style.color,
                 }}
               >
@@ -108,14 +110,17 @@ export const SchedulePage = () => {
             </Card>
           );
         })}
-        {items.length > 3 ? <Typography.Text type="secondary">+{items.length - 3} cuộc họp</Typography.Text> : null}
+        {items.length > 3 ? <Typography.Text type="secondary" style={{ fontSize: 10 }}>+{items.length - 3} cuộc họp</Typography.Text> : null}
       </Space>
     );
   };
 
   return (
     <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Card title="Lịch họp theo tháng">
+      <Card
+        title={<span style={{ fontSize: 16, fontWeight: 600 }}>Lịch họp theo tháng</span>}
+        style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }}
+      >
         <Calendar
           value={calendarDate}
           onSelect={setCalendarDate}
