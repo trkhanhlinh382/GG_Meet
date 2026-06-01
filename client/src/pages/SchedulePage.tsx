@@ -1,4 +1,4 @@
-import { Calendar, Card, Space, Typography } from "antd";
+import { Calendar, Space, Typography } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -21,27 +21,27 @@ const getMeetingStatus = (meeting: Meeting): "ongoing" | "upcoming" | "ended" =>
   return "ongoing";
 };
 
-const statusCardStyle = (status: "ongoing" | "upcoming" | "ended") => {
+const statusCellStyle = (status: "ongoing" | "upcoming" | "ended") => {
   if (status === "ongoing") {
     return {
-      background: "rgba(82, 196, 26, 0.05)",
-      border: "1px solid rgba(82, 196, 26, 0.18)",
-      color: "#237804",
+      background: "rgba(34, 197, 94, 0.12)",
+      border: "1px solid rgba(34, 197, 94, 0.25)",
+      color: "var(--accent-success)",
     };
   }
 
   if (status === "upcoming") {
     return {
-      background: "rgba(24, 144, 255, 0.05)",
-      border: "1px solid rgba(24, 144, 255, 0.18)",
-      color: "#0958d9",
+      background: "rgba(56, 189, 248, 0.12)",
+      border: "1px solid rgba(56, 189, 248, 0.25)",
+      color: "var(--accent-info)",
     };
   }
 
   return {
-    background: "#fafafa",
-    border: "1px solid rgba(0, 0, 0, 0.06)",
-    color: "#595959",
+    background: "rgba(71, 85, 105, 0.15)",
+    border: "1px solid var(--border)",
+    color: "var(--text-muted)",
   };
 };
 
@@ -77,58 +77,136 @@ export const SchedulePage = () => {
     const items = meetingsByDate.get(value.format("YYYY-MM-DD")) ?? [];
 
     return (
-      <Space direction="vertical" size={4} style={{ width: "100%" }}>
+      <Space direction="vertical" size={3} style={{ width: "100%" }}>
         {items.slice(0, 3).map((item) => {
           const status = getMeetingStatus(item);
-          const style = statusCardStyle(status);
+          const style = statusCellStyle(status);
           return (
-            <Card
+            <div
               key={item._id}
-              size="small"
-              hoverable
               onClick={() => navigate(`/meetings/${item._id}`)}
-              bodyStyle={{ padding: "2px 6px" }}
               style={{
                 ...style,
-                borderRadius: 6,
+                borderRadius: "var(--r-xs)",
                 cursor: "pointer",
-                boxShadow: "none",
+                padding: "2px 6px",
+                transition: "all var(--dur-fast) var(--ease)",
               }}
             >
               <Typography.Text
-                ellipsis={{ tooltip: `${item.title} - ${dayjs(item.startTime).format("HH:mm")} • Host: ${typeof item.ownerId === "object" ? item.ownerId.fullName : "Không rõ host"}` }}
+                ellipsis={{
+                  tooltip: `${item.title} - ${dayjs(item.startTime).format("HH:mm")} • Host: ${
+                    typeof item.ownerId === "object" ? item.ownerId.fullName : "Không rõ host"
+                  }`,
+                }}
                 style={{
                   display: "block",
                   fontSize: 11,
-                  fontWeight: 500,
-                  lineHeight: "14px",
+                  fontWeight: 600,
+                  lineHeight: "16px",
                   color: style.color,
                 }}
               >
-                {item.title} - {dayjs(item.startTime).format("HH:mm")}
+                {item.title} · {dayjs(item.startTime).format("HH:mm")}
               </Typography.Text>
-            </Card>
+            </div>
           );
         })}
-        {items.length > 3 ? <Typography.Text type="secondary" style={{ fontSize: 10 }}>+{items.length - 3} cuộc họp</Typography.Text> : null}
+        {items.length > 3 ? (
+          <Typography.Text
+            style={{ fontSize: 10, color: "var(--text-muted)", paddingLeft: 2 }}
+          >
+            +{items.length - 3} cuộc họp
+          </Typography.Text>
+        ) : null}
       </Space>
     );
   };
 
   return (
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Card
-        title={<span style={{ fontSize: 16, fontWeight: 600 }}>Lịch họp theo tháng</span>}
-        style={{ borderRadius: 12, border: "1px solid rgba(0,0,0,0.06)", boxShadow: "0 4px 12px rgba(0,0,0,0.02)" }}
-      >
-        <Calendar
-          value={calendarDate}
-          onSelect={setCalendarDate}
-          onPanelChange={(value) => setCalendarDate(value)}
-          cellRender={(value) => dateCellRender(value)}
-          fullscreen
-        />
-      </Card>
+    <Space direction="vertical" size={0} style={{ width: "100%" }}>
+      {/* Page Header */}
+      <div className="page-header">
+        <h1 className="page-title">📅 Lịch họp</h1>
+        <p className="page-subtitle">Xem toàn bộ lịch cuộc họp của bạn theo tháng</p>
+      </div>
+
+      {/* Calendar Card */}
+      <div className="section-card">
+        <div className="section-card-header">
+          <span className="section-card-title">
+            📆 Lịch theo tháng — {calendarDate.format("MM/YYYY")}
+          </span>
+          <Typography.Text style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {calendarData?.meetings?.length ?? 0} cuộc họp trong tháng
+          </Typography.Text>
+        </div>
+
+        <div style={{ padding: "8px 0" }}>
+          <Calendar
+            value={calendarDate}
+            onSelect={setCalendarDate}
+            onPanelChange={(value) => setCalendarDate(value)}
+            cellRender={(value) => dateCellRender(value)}
+            fullscreen
+          />
+        </div>
+
+        {/* Legend */}
+        <div
+          style={{
+            padding: "12px 20px",
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            gap: 20,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
+          <Typography.Text style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>
+            Chú thích:
+          </Typography.Text>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "var(--accent-success)",
+              }}
+            />
+            <Typography.Text style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              Đang diễn ra
+            </Typography.Text>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "var(--accent-info)",
+              }}
+            />
+            <Typography.Text style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              Sắp diễn ra
+            </Typography.Text>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: "var(--text-muted)",
+              }}
+            />
+            <Typography.Text style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              Đã kết thúc
+            </Typography.Text>
+          </div>
+        </div>
+      </div>
     </Space>
   );
 };

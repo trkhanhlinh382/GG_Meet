@@ -1,11 +1,36 @@
-import { BellOutlined, CalendarOutlined, LogoutOutlined, ScheduleOutlined, VideoCameraOutlined } from "@ant-design/icons";
+import {
+  BellOutlined,
+  CalendarOutlined,
+  LogoutOutlined,
+  ScheduleOutlined,
+  ThunderboltOutlined,
+  VideoCameraOutlined,
+} from "@ant-design/icons";
 import type { AxiosError } from "axios";
-import { Avatar, Button, Layout, Menu, Spin, Typography, message, Popover, List, Badge } from "antd";
+import {
+  Avatar,
+  Badge,
+  Button,
+  Layout,
+  List,
+  Menu,
+  Popover,
+  Spin,
+  Typography,
+  message,
+} from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { http, setAuthToken } from "./api/http";
 import type { DashboardPayload, Notification } from "./api/types";
-import { markNotificationAsRead, fetchNotifications } from "./api/notifications";
+import { fetchNotifications, markNotificationAsRead } from "./api/notifications";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 dayjs.extend(relativeTime);
@@ -18,7 +43,9 @@ import { MeetingRoomPage } from "./pages/MeetingRoomPage.tsx";
 import { SchedulePage } from "./pages/SchedulePage";
 
 const { Header, Content, Sider } = Layout;
-const SIDER_WIDTH = 200;
+const SIDER_WIDTH = 220;
+
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface SessionUser {
   id: string;
@@ -37,18 +64,13 @@ interface CreateMeetingInput {
   isInstant?: boolean;
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 const getStoredToken = (): string | null => localStorage.getItem("gg_meet_access_token");
 const getStoredUser = (): SessionUser | null => {
   const raw = localStorage.getItem("gg_meet_user");
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as SessionUser;
-  } catch {
-    return null;
-  }
+  if (!raw) return null;
+  try { return JSON.parse(raw) as SessionUser; } catch { return null; }
 };
 
 const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
@@ -56,50 +78,46 @@ const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
     const payload = token.split(".")[1];
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
     return JSON.parse(atob(normalized)) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 };
 
 const extractMeetingId = (raw: string): string | null => {
   const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-
+  if (!trimmed) return null;
   try {
     const url = new URL(trimmed);
     const segments = url.pathname.split("/").filter(Boolean);
     const roomIndex = segments.lastIndexOf("room");
-    if (roomIndex >= 0 && segments[roomIndex + 1]) {
-      return segments[roomIndex + 1];
-    }
-  } catch {
-    // Treat as plain meeting id.
-  }
-
+    if (roomIndex >= 0 && segments[roomIndex + 1]) return segments[roomIndex + 1];
+  } catch { /* treat as plain meeting id */ }
   return trimmed;
 };
 
-const RoomPlaceholderRoute = ({ setActiveCallRoomId, setIsCallMinimized }: { setActiveCallRoomId: (id: string | null) => void; setIsCallMinimized: (min: boolean) => void }) => {
-  const { id } = useParams();
+// ─── Room Placeholder ─────────────────────────────────────────────────────────
 
+const RoomPlaceholderRoute = ({
+  setActiveCallRoomId,
+  setIsCallMinimized,
+}: {
+  setActiveCallRoomId: (id: string | null) => void;
+  setIsCallMinimized: (min: boolean) => void;
+}) => {
+  const { id } = useParams();
   useEffect(() => {
-    if (id) {
-      setActiveCallRoomId(id);
-      setIsCallMinimized(false);
-    }
+    if (id) { setActiveCallRoomId(id); setIsCallMinimized(false); }
   }, [id, setActiveCallRoomId, setIsCallMinimized]);
 
   return (
-    <div style={{ display: "flex", flex: 1, height: "100%", alignItems: "center", justifyContent: "center", background: "#0b0f17", color: "#9ca3af", borderRadius: 12, minHeight: 450 }}>
+    <div style={{ display: "flex", flex: 1, height: "100%", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
       <div style={{ textAlign: "center" }}>
         <Spin size="large" />
-        <div style={{ marginTop: 16, fontSize: 14 }}>Đang kết nối vào phòng họp...</div>
+        <div style={{ marginTop: 16, fontSize: 14, color: "var(--text-secondary)" }}>Đang kết nối vào phòng họp…</div>
       </div>
     </div>
   );
 };
+
+// ─── App ──────────────────────────────────────────────────────────────────────
 
 function App() {
   const navigate = useNavigate();
@@ -107,12 +125,14 @@ function App() {
 
   const [activeCallRoomId, setActiveCallRoomId] = useState<string | null>(null);
   const [isCallMinimized, setIsCallMinimized] = useState<boolean>(false);
-
   const [token, setToken] = useState<string | null>(getStoredToken());
   const [user, setUser] = useState<SessionUser | null>(getStoredUser());
   const [dashboard, setDashboard] = useState<DashboardPayload>();
   const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+
+  // ─── Session ────────────────────────────────────────────────────────────────
 
   const clearSession = useCallback(
     (sessionExpired?: boolean) => {
@@ -121,107 +141,75 @@ function App() {
       setUser(null);
       setDashboard(undefined);
       localStorage.removeItem("gg_meet_user");
-
-      if (sessionExpired) {
-        void message.warning("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
-      }
-
+      if (sessionExpired) void message.warning("Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.");
       navigate("/login");
     },
     [navigate],
   );
 
-  const fetchDashboard = useCallback(async (): Promise<DashboardPayload | undefined> => {
-    if (!token) {
-      return undefined;
-    }
+  // ─── Dashboard fetch ──────────────────────────────────────────────────────
 
+  const fetchDashboard = useCallback(async (): Promise<DashboardPayload | undefined> => {
+    if (!token) return undefined;
     try {
       setLoadingDashboard(true);
-      const response = await http.get<DashboardPayload>("/dashboard", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await http.get<DashboardPayload>("/dashboard");
       setDashboard(response.data);
       return response.data;
     } catch (error) {
       const axiosError = error as AxiosError<{ message?: string }>;
-      if (axiosError.response?.status === 401) {
-        clearSession(true);
-        return undefined;
-      }
-
-      message.warning("Không tải được dashboard, hãy đảm bảo MongoDB và API đang chạy.");
+      if (axiosError.response?.status === 401) { clearSession(true); return undefined; }
+      void message.warning("Không tải được dashboard — hãy kiểm tra kết nối API.");
       return undefined;
     } finally {
       setLoadingDashboard(false);
     }
   }, [clearSession, token]);
 
+  // ─── On mount: validate token ─────────────────────────────────────────────
+
   useEffect(() => {
     const currentToken = getStoredToken();
-    if (currentToken) {
-      const payload = decodeJwtPayload(currentToken);
-      const expiresAt = typeof payload?.exp === "number" ? payload.exp * 1000 : null;
-
-      if (expiresAt && expiresAt <= Date.now()) {
-        clearSession(true);
-        return;
-      }
-
-      setAuthToken(currentToken);
-
-      if (!user) {
-        if (typeof payload?.id === "string" && typeof payload?.fullName === "string" && typeof payload?.email === "string") {
-          const parsedUser = {
-            id: payload.id,
-            fullName: payload.fullName,
-            email: payload.email,
-          };
-          setUser(parsedUser);
-          localStorage.setItem("gg_meet_user", JSON.stringify(parsedUser));
-        }
-      }
+    if (!currentToken) return;
+    const payload = decodeJwtPayload(currentToken);
+    const expiresAt = typeof payload?.exp === "number" ? payload.exp * 1000 : null;
+    if (expiresAt && expiresAt <= Date.now()) { clearSession(true); return; }
+    setAuthToken(currentToken);
+    if (!user && typeof payload?.id === "string" && typeof payload?.fullName === "string" && typeof payload?.email === "string") {
+      const parsedUser = { id: payload.id, fullName: payload.fullName, email: payload.email };
+      setUser(parsedUser);
+      localStorage.setItem("gg_meet_user", JSON.stringify(parsedUser));
     }
   }, [clearSession, user]);
 
+  // ─── On token change: fetch dashboard + notifications ─────────────────────
+
   useEffect(() => {
-    if (!token) {
-      return;
-    }
+    if (!token) return;
     void fetchDashboard();
-    fetchNotifications().then(setNotifications);
+    fetchNotifications().then(setNotifications).catch(() => undefined);
   }, [fetchDashboard, token]);
 
-  useEffect(() => {
-    if (!token) {
-      return;
-    }
+  // ─── On route change: refresh dashboard data ─────────────────────────────
 
+  useEffect(() => {
+    if (!token) return;
     const shouldRefresh =
       location.pathname.startsWith("/dashboard") ||
       location.pathname.startsWith("/meetings") ||
       location.pathname.startsWith("/schedule");
-
-    if (!shouldRefresh) {
-      return;
-    }
-
-    void fetchDashboard();
+    if (shouldRefresh) void fetchDashboard();
   }, [fetchDashboard, location.pathname, token]);
 
+  // ─── Sidebar active key ────────────────────────────────────────────────────
+
   const selectedKey = useMemo(() => {
-    if (location.pathname.startsWith("/schedule")) {
-      return "schedule";
-    }
-
-    if (location.pathname.startsWith("/meetings") || location.pathname.startsWith("/room") || location.pathname.startsWith("/invitations")) {
-      return "meetings";
-    }
-
+    if (location.pathname.startsWith("/schedule")) return "schedule";
+    if (location.pathname.startsWith("/meetings") || location.pathname.startsWith("/room") || location.pathname.startsWith("/invitations")) return "meetings";
     return "dashboard";
   }, [location.pathname]);
+
+  // ─── Auth handlers ─────────────────────────────────────────────────────────
 
   const handleLogin = (newToken: string, nextUser: SessionUser) => {
     setToken(newToken);
@@ -230,184 +218,226 @@ function App() {
     navigate("/dashboard");
   };
 
-  const handleLogout = () => {
-    clearSession();
-  };
+  // ─── Meeting actions ───────────────────────────────────────────────────────
 
-  const createScheduledMeeting = async (input: CreateMeetingInput) => {
+  const createMeeting = async (input: CreateMeetingInput) => {
     try {
-      const response = await http.post(
-        "/meetings",
-        input,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
+      const response = await http.post("/meetings", input);
       await fetchDashboard();
-
       const startsAt = new Date(response.data.startTime).getTime();
       if (startsAt > Date.now()) {
-        message.success("Đã tạo meeting trong tương lai. Cuộc họp sẽ nằm ở Upcoming.");
+        void message.success("Đã tạo cuộc họp. Sẽ nằm ở danh sách Sắp tới.");
         return;
       }
-
       navigate(`/room/${response.data._id}`);
     } catch (error) {
       const axiosError = error as AxiosError<{ message?: string }>;
-
       if (axiosError.response?.status === 409) {
         const first = dashboard?.ongoingMeetings?.[0] ?? dashboard?.upcomingMeetings?.[0];
         if (first?._id) {
-          message.info("Bạn đang có meeting trùng lịch, sẽ mở room gần nhất.");
+          void message.info("Trùng lịch — mở room gần nhất.");
           navigate(`/room/${first._id}`);
           return;
         }
-
-        message.warning("Trùng lịch meeting. Hãy đổi thời gian hoặc vào room đã có.");
+        void message.warning("Trùng lịch. Hãy đổi thời gian hoặc vào room đã có.");
         return;
       }
-
-      message.error("Không thể tạo meeting");
+      void message.error("Không thể tạo cuộc họp");
     }
   };
 
   const joinMeetingById = async (meetingId: string) => {
     try {
-      await http.post(
-        `/meetings/${meetingId}/join`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
+      await http.post(`/meetings/${meetingId}/join`, {});
       navigate(`/room/${meetingId}`);
     } catch (error) {
       const axiosError = error as AxiosError<{ message?: string; invitationId?: string }>;
-      if (axiosError.response?.status === 404) {
-        message.error("Link/Meeting ID không tồn tại");
-        return;
-      }
-
+      if (axiosError.response?.status === 404) { void message.error("Link/Meeting ID không tồn tại"); return; }
       if (axiosError.response?.status === 403) {
         const data = axiosError.response.data;
-        if (data?.invitationId) {
-          message.info(data.message || "Vui lòng chấp nhận lời mời để tham gia cuộc họp.");
-          navigate(`/invitations/${data.invitationId}`);
-          return;
-        }
-        message.error(data?.message || "Cuộc họp riêng tư: Chỉ người được mời mới có thể tham gia.");
-        return;
+        if (data?.invitationId) { void message.info(data.message || "Vui lòng chấp nhận lời mời."); navigate(`/invitations/${data.invitationId}`); return; }
+        void message.error(data?.message || "Cuộc họp riêng tư: chỉ người được mời mới vào được."); return;
       }
-
-      message.error("Không thể tham gia cuộc họp từ link");
+      void message.error("Không thể tham gia cuộc họp");
     }
   };
 
   const joinUpcomingMeeting = async () => {
     const latest = (await fetchDashboard()) ?? dashboard;
     const first = latest?.ongoingMeetings?.[0] ?? latest?.upcomingMeetings?.[0];
-    if (!first?._id) {
-      message.info("Chưa có lịch họp sắp tới, hãy tạo meeting trước");
-      return;
-    }
-
+    if (!first?._id) { void message.info("Chưa có lịch họp, hãy tạo meeting trước"); return; }
     await joinMeetingById(first._id);
   };
 
   const joinByLink = async (rawLink: string) => {
     const meetingId = extractMeetingId(rawLink);
-
-    if (!meetingId) {
-      message.warning("Vui lòng nhập link hoặc Meeting ID");
-      return;
-    }
-
+    if (!meetingId) { void message.warning("Vui lòng nhập link hoặc Meeting ID"); return; }
     await joinMeetingById(meetingId);
   };
 
-  if (!token) {
-    return <LoginPage onLogin={handleLogin} />;
-  }
+  // ─── Unauth: show login ────────────────────────────────────────────────────
+
+  if (!token) return <LoginPage onLogin={handleLogin} />;
+
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
+    <Layout style={{ minHeight: "100vh", background: "var(--bg-base)" }}>
+      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
       <Sider
         width={SIDER_WIDTH}
         breakpoint="lg"
         collapsedWidth="0"
-        style={{
-          position: "fixed",
-          left: 0,
-          top: 0,
-          bottom: 0,
-          height: "100vh",
-          zIndex: 1000,
-          overflow: "auto",
-        }}
+        style={{ position: "fixed", left: 0, top: 0, bottom: 0, height: "100vh", zIndex: 1000, overflow: "hidden", background: "var(--bg-surface)", borderRight: "1px solid var(--border)" }}
       >
         <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-          <div className="brand">GG Meet</div>
-          <div style={{ flex: 1, overflow: "auto" }}>
+          {/* Brand */}
+          <div className="brand">
+            <span className="brand-dot" />
+            GG Meet
+          </div>
+
+          {/* Nav */}
+          <div style={{ flex: 1, overflow: "auto", padding: "8px 12px" }}>
             <Menu
               theme="dark"
               mode="inline"
               selectedKeys={[selectedKey]}
+              style={{ background: "transparent", border: "none" }}
               onClick={({ key }) => {
-                if (key === "dashboard") {
-                  navigate("/dashboard");
-                  return;
-                }
-
-                if (key === "schedule") {
-                  navigate("/schedule");
-                  return;
-                }
-
-                if (key === "meetings") {
-                  navigate("/meetings");
-                  return;
-                }
-
+                if (key === "dashboard") { navigate("/dashboard"); return; }
+                if (key === "schedule")  { navigate("/schedule"); return; }
+                if (key === "meetings")  { navigate("/meetings"); return; }
                 void joinUpcomingMeeting();
               }}
               items={[
-                { key: "dashboard", icon: <CalendarOutlined />, label: "Dashboard" },
-                { key: "schedule", icon: <ScheduleOutlined />, label: "Schedule" },
-                { key: "meetings", icon: <VideoCameraOutlined />, label: "Meeting" },
+                {
+                  key: "dashboard",
+                  icon: <CalendarOutlined />,
+                  label: "Tổng quan",
+                  style: { borderRadius: 8, marginBottom: 2 },
+                },
+                {
+                  key: "schedule",
+                  icon: <ScheduleOutlined />,
+                  label: "Lịch họp",
+                  style: { borderRadius: 8, marginBottom: 2 },
+                },
+                {
+                  key: "meetings",
+                  icon: <VideoCameraOutlined />,
+                  label: "Cuộc họp",
+                  style: { borderRadius: 8, marginBottom: 2 },
+                },
               ]}
             />
           </div>
-          <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.16)" }}>
-            <Button block icon={<LogoutOutlined />} onClick={handleLogout}>
-              Logout
+
+          {/* Quick instant join */}
+          <div style={{ padding: "8px 12px" }}>
+            <Button
+              type="primary"
+              icon={<ThunderboltOutlined />}
+              block
+              style={{ borderRadius: 8, background: "var(--accent)", border: "none", fontWeight: 600 }}
+              onClick={() => void joinUpcomingMeeting()}
+            >
+              Vào họp ngay
             </Button>
+          </div>
+
+          {/* User info + logout */}
+          <div className="sidebar-user">
+            <div className="sidebar-user-avatar">
+              {user?.fullName?.charAt(0)?.toUpperCase() ?? "U"}
+            </div>
+            <div className="sidebar-user-info">
+              <div className="sidebar-user-name">{user?.fullName ?? "Người dùng"}</div>
+              <div className="sidebar-user-email">{user?.email}</div>
+            </div>
+            <Button
+              type="text"
+              size="small"
+              icon={<LogoutOutlined />}
+              onClick={() => clearSession()}
+              style={{ color: "var(--text-muted)", flexShrink: 0 }}
+              title="Đăng xuất"
+            />
           </div>
         </div>
       </Sider>
 
-      <Layout style={{ marginLeft: SIDER_WIDTH }}>
-        <Header className="app-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Avatar>{user?.fullName?.charAt(0) ?? "U"}</Avatar>
-            <Typography.Text style={{ color: "white", fontSize: 18 }}>{user?.email ?? "user@ggmeet.dev"}</Typography.Text>
+      {/* ── Main Layout ──────────────────────────────────────────────────────── */}
+      <Layout style={{ marginLeft: SIDER_WIDTH, background: "var(--bg-base)" }}>
+        {/* Header */}
+        <Header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "var(--bg-surface)",
+            borderBottom: "1px solid var(--border)",
+            padding: "0 24px",
+            height: 60,
+            position: "sticky",
+            top: 0,
+            zIndex: 100,
+          }}
+        >
+          {/* Left: greeting */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Avatar
+              style={{ background: "linear-gradient(135deg, var(--accent), #8b5cf6)", fontWeight: 700, fontSize: 15 }}
+            >
+              {user?.fullName?.charAt(0)?.toUpperCase() ?? "U"}
+            </Avatar>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", lineHeight: 1.2 }}>
+                {user?.fullName ?? "Người dùng"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.2 }}>
+                {user?.email}
+              </div>
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+
+          {/* Right: notifications */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <Popover
+              open={notifOpen}
+              onOpenChange={setNotifOpen}
               placement="bottomRight"
               trigger="click"
+              title={
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Thông báo</span>
+                  {unreadCount > 0 && (
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12, padding: 0, color: "var(--accent)" }}
+                      onClick={async () => {
+                        await Promise.all(
+                          notifications.filter((n) => !n.isRead).map((n) => markNotificationAsRead(n._id))
+                        );
+                        setNotifications(await fetchNotifications());
+                      }}
+                    >
+                      Đánh dấu tất cả đã đọc
+                    </Button>
+                  )}
+                </div>
+              }
               content={
                 <List
                   dataSource={notifications}
                   locale={{ emptyText: "Không có thông báo" }}
-                  style={{ minWidth: 320, maxHeight: 400, overflow: "auto" }}
+                  style={{ minWidth: 340, maxHeight: 420, overflowY: "auto" }}
                   renderItem={(item: Notification) => (
                     <List.Item
+                      style={{ padding: "10px 0", borderBottom: "1px solid var(--border)", cursor: "pointer", gap: 0 }}
                       actions={
                         !item.isRead
                           ? [
@@ -415,54 +445,62 @@ function App() {
                                 key="mark-read"
                                 size="small"
                                 type="link"
+                                style={{ padding: 0, fontSize: 11, color: "var(--accent)" }}
                                 onClick={async (e) => {
                                   e.stopPropagation();
                                   await markNotificationAsRead(item._id);
                                   setNotifications(await fetchNotifications());
                                 }}
                               >
-                                Đã đọc
+                                Đọc
                               </Button>,
                             ]
                           : []
                       }
                     >
-                      <Badge dot={!item.isRead}>
-                        <Typography.Text strong={!item.isRead}>{item.title}</Typography.Text>
-                      </Badge>
-                      {item.createdAt && (
-                        <Typography.Text type="secondary" style={{ fontSize: 12, display: "block" }}>
-                          {dayjs(item.createdAt).fromNow()}
-                        </Typography.Text>
-                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {!item.isRead && (
+                            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", display: "inline-block", flexShrink: 0 }} />
+                          )}
+                          <Typography.Text strong={!item.isRead} style={{ fontSize: 13 }}>
+                            {item.title}
+                          </Typography.Text>
+                        </div>
+                        {item.createdAt && (
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, paddingLeft: item.isRead ? 0 : 13 }}>
+                            {dayjs(item.createdAt).fromNow()}
+                          </div>
+                        )}
+                      </div>
                     </List.Item>
                   )}
                 />
               }
             >
-              <Badge count={notifications.filter(n => !n.isRead).length} size="small">
-                <Button shape="circle" icon={<BellOutlined />} />
+              <Badge count={unreadCount} size="small" offset={[-2, 2]}>
+                <Button
+                  shape="circle"
+                  icon={<BellOutlined />}
+                  style={{ background: "var(--bg-surface-2)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                />
               </Badge>
             </Popover>
           </div>
         </Header>
 
-        <Content style={{ margin: "16px" }}>
+        {/* Content */}
+        <Content style={{ padding: "24px", minHeight: "calc(100vh - 60px)" }}>
           {loadingDashboard ? (
             <div className="loading-shell">
-              <Spin />
+              <Spin size="large" />
+              <span style={{ color: "var(--text-secondary)", fontSize: 14 }}>Đang tải…</span>
             </div>
           ) : (
             <Routes>
-              <Route
-                path="/dashboard"
-                element={<DashboardOverviewPage data={dashboard} />}
-              />
+              <Route path="/dashboard" element={<DashboardOverviewPage data={dashboard} onCreateMeeting={createMeeting} onJoinMeeting={joinByLink} />} />
               <Route path="/schedule" element={<SchedulePage />} />
-              <Route
-                path="/meetings"
-                element={<MeetingsPage data={dashboard} onCreateMeeting={createScheduledMeeting} onJoinMeeting={joinByLink} />}
-              />
+              <Route path="/meetings" element={<MeetingsPage data={dashboard} onCreateMeeting={createMeeting} onJoinMeeting={joinByLink} />} />
               <Route path="/meetings/:id" element={user ? <MeetingDetailPage token={token} user={user} /> : <Navigate to="/login" replace />} />
               <Route path="/invitations/:id" element={user ? <InvitationDetailPage onJoinMeeting={joinByLink} /> : <Navigate to="/login" replace />} />
               <Route path="/room/:id" element={user ? <RoomPlaceholderRoute setActiveCallRoomId={setActiveCallRoomId} setIsCallMinimized={setIsCallMinimized} /> : <Navigate to="/login" replace />} />
@@ -471,6 +509,8 @@ function App() {
           )}
         </Content>
       </Layout>
+
+      {/* ── Floating Meeting Room Overlay ────────────────────────────────────── */}
       {activeCallRoomId && user && token && (
         <div
           style={
@@ -479,15 +519,15 @@ function App() {
                   position: "fixed",
                   right: 24,
                   bottom: 24,
-                  width: 320,
-                  height: 240,
+                  width: 340,
+                  height: 250,
                   zIndex: 9999,
-                  background: "rgba(11, 15, 23, 0.95)",
-                  borderRadius: 16,
+                  background: "rgba(10, 13, 20, 0.97)",
+                  borderRadius: "var(--r-xl)",
                   overflow: "hidden",
-                  boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  transition: "all 0.3s cubic-bezier(.4,0,.2,1)",
+                  boxShadow: "0 20px 60px rgba(0,0,0,0.7)",
+                  border: "1px solid var(--border-strong)",
+                  transition: `all var(--dur-slow) var(--ease)`,
                 }
               : {
                   position: "fixed",
@@ -496,8 +536,8 @@ function App() {
                   right: 0,
                   bottom: 0,
                   zIndex: 2000,
-                  background: "#0b0f17",
-                  transition: "all 0.3s cubic-bezier(.4,0,.2,1)",
+                  background: "var(--bg-base)",
+                  transition: `all var(--dur-slow) var(--ease)`,
                   overflow: "auto",
                 }
           }
@@ -507,19 +547,9 @@ function App() {
             user={user}
             roomId={activeCallRoomId}
             isMinimized={isCallMinimized}
-            onMinimize={() => {
-              setIsCallMinimized(true);
-              navigate("/dashboard");
-            }}
-            onMaximize={() => {
-              setIsCallMinimized(false);
-              navigate(`/room/${activeCallRoomId}`);
-            }}
-            onLeave={() => {
-              setActiveCallRoomId(null);
-              setIsCallMinimized(false);
-              navigate("/meetings");
-            }}
+            onMinimize={() => { setIsCallMinimized(true); navigate("/dashboard"); }}
+            onMaximize={() => { setIsCallMinimized(false); navigate(`/room/${activeCallRoomId}`); }}
+            onLeave={() => { setActiveCallRoomId(null); setIsCallMinimized(false); navigate("/meetings"); }}
           />
         </div>
       )}
