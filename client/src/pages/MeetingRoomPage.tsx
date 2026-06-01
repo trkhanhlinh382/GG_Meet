@@ -6,7 +6,7 @@ import {
   VideoCameraAddOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Card, Col, Input, List, Row, Select, Space, Switch, Tag, Typography, message, Tabs, Popover } from "antd";
+import { Alert, Button, Card, Col, Input, List, Row, Select, Space, Switch, Tag, Typography, message, Tabs, Popover, Avatar } from "antd";
 import { RightOutlined, LeftOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -50,10 +50,10 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   const navigate = useNavigate();
   const meetingId = roomId || id || "live";
 
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const [activeLocalStream, setActiveLocalStream] = useState<MediaStream | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [stickerPopoverOpen, setStickerPopoverOpen] = useState(false);
@@ -92,6 +92,81 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
     [messages],
   );
 
+  const renderLocalVideo = (height: string | number = "100%", avatarSize: number = 80) => {
+    const hasVideo = activeLocalStream && activeLocalStream.getVideoTracks().length > 0 && cameraOn;
+    if (hasVideo) {
+      return (
+        <video
+          ref={(node) => {
+            if (node && node.srcObject !== activeLocalStream) {
+              node.srcObject = activeLocalStream;
+            }
+          }}
+          autoPlay
+          muted
+          playsInline
+          style={{ width: "100%", height: "100%", objectFit: layoutMode === "grid" ? "cover" : "contain", display: "block" }}
+        />
+      );
+    }
+
+    return (
+      <div style={{
+        width: "100%",
+        height: height,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        background: "radial-gradient(circle at center, #1e293b, #0f172a)",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.08)"
+      }}>
+        <Avatar size={avatarSize} style={{ backgroundColor: '#6366f1', fontSize: avatarSize / 2.5, fontWeight: "bold" }}>
+          {user.fullName.charAt(0).toUpperCase()}
+        </Avatar>
+      </div>
+    );
+  };
+
+  const renderRemoteVideo = (socketId: string, stream: MediaStream | null, height: string | number = "100%", avatarSize: number = 80) => {
+    const name = participantNameBySocket.get(socketId) ?? "Participant";
+    const pState = participants.find((item) => item.socketId === socketId);
+    const pCameraOn = pState ? pState.cameraOn : true;
+    const hasVideo = stream && stream.getVideoTracks().length > 0 && pCameraOn;
+
+    if (hasVideo && stream) {
+      return (
+        <video
+          autoPlay
+          playsInline
+          style={{ width: "100%", height: "100%", objectFit: layoutMode === "grid" ? "cover" : "contain", display: "block" }}
+          ref={(node) => {
+            if (node && node.srcObject !== stream) {
+              node.srcObject = stream;
+            }
+          }}
+        />
+      );
+    }
+
+    return (
+      <div style={{
+        width: "100%",
+        height: height,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        background: "radial-gradient(circle at center, #1e293b, #0f172a)",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.08)"
+      }}>
+        <Avatar size={avatarSize} style={{ backgroundColor: '#6366f1', fontSize: avatarSize / 2.5, fontWeight: "bold" }}>
+          {name.charAt(0).toUpperCase()}
+        </Avatar>
+      </div>
+    );
+  };
+
   const createPeerConnection = (remoteSocketId: string, initiateOffer: boolean) => {
     if (remoteSocketId === socketRef.current?.id) {
       return;
@@ -111,16 +186,20 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
     }
 
     peer.ontrack = (event) => {
-      setRemoteStreams((prev) => {
-        const current = prev[remoteSocketId] ?? new MediaStream();
-
-        // Keep at most one video and one audio track for stable rendering.
-        const sameKindTracks = current.getTracks().filter((track) => track.kind === event.track.kind);
-        sameKindTracks.forEach((track) => current.removeTrack(track));
-        current.addTrack(event.track);
-
-        return { ...prev, [remoteSocketId]: current };
-      });
+      const remoteStream = event.streams[0];
+      if (remoteStream) {
+        setRemoteStreams((prev) => ({
+          ...prev,
+          [remoteSocketId]: remoteStream,
+        }));
+      } else {
+        setRemoteStreams((prev) => {
+          const currentTracks = prev[remoteSocketId] ? prev[remoteSocketId].getTracks() : [];
+          const filteredTracks = currentTracks.filter((t) => t.kind !== event.track.kind);
+          const nextStream = new MediaStream([...filteredTracks, event.track]);
+          return { ...prev, [remoteSocketId]: nextStream };
+        });
+      }
     };
 
     peer.onicecandidate = (event) => {
@@ -203,6 +282,9 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   };
 
   useEffect(() => {
+    let isMounted = true;
+    let socket: Socket | null = null;
+
     http
       .get(`/meetings/${meetingId}/details`, {
         headers: {
@@ -210,6 +292,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
         },
       })
       .then((response) => {
+        if (!isMounted) return;
         // No privacy mode settings needed locally
         if (Array.isArray(response.data?.messages)) {
           const loadedMessages = response.data.messages.map((m: any) => ({
@@ -227,192 +310,204 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
       })
       .catch(() => undefined);
 
+    const startSignaling = () => {
+      if (!isMounted) return;
+
+      socket = io(import.meta.env.VITE_API_BASE_URL?.replace("/api", "") ?? "http://localhost:4000", {
+        auth: { token },
+        transports: ["websocket"],
+      });
+
+      socketRef.current = socket;
+
+      socket.on("connect", () => {
+        socket?.emit("meeting:request-join", {
+          meetingId,
+          userId: user.id,
+          name: user.fullName,
+        });
+      });
+
+      socket.on("meeting:waiting-room", () => {
+        setWaitingRoom(true);
+        setJoined(false);
+      });
+
+      socket.on("meeting:not-started", ({ startsAt: nextStartsAt }) => {
+        setStartsAt(new Date(nextStartsAt).toISOString());
+        setJoined(false);
+        setWaitingRoom(false);
+      });
+
+      socket.on("meeting:join-approved", ({ isHost: host, isCoHost: coHost, participants: existingParticipants }) => {
+        setStartsAt(null);
+        setWaitingRoom(false);
+        setJoined(true);
+        setIsHost(Boolean(host));
+        setIsCoHost(Boolean(coHost));
+        setParticipants((existingParticipants ?? []).filter((participant: ParticipantState) => participant.socketId !== socket?.id));
+
+        for (const participant of existingParticipants ?? []) {
+          createPeerConnection(participant.socketId, true);
+          void ensureLocalTracksOnPeer(participant.socketId).then(() => renegotiatePeer(participant.socketId));
+        }
+      });
+
+      socket.on("meeting:join-denied", ({ reason }) => {
+        message.error(reason ?? "Không thể tham gia room");
+        if (onLeave) {
+          onLeave();
+        } else {
+          navigate("/dashboard");
+        }
+      });
+
+      socket.on("meeting:participants-updated", (items: ParticipantState[]) => {
+        setParticipants(items.filter((participant) => participant.socketId !== socket?.id));
+      });
+
+      socket.on("meeting:waiting-updated", (items: ParticipantState[]) => {
+        setWaitingParticipants(items);
+      });
+
+      socket.on("meeting:participant-joined", (participant: ParticipantState) => {
+        if (participant.socketId === socket?.id) {
+          return;
+        }
+
+        // The newly joined user creates offers from join-approved; existing members wait for offer and answer.
+        createPeerConnection(participant.socketId, false);
+        void ensureLocalTracksOnPeer(participant.socketId);
+      });
+
+      socket.on("meeting:participant-left", ({ socketId }) => {
+        const peer = peersRef.current.get(socketId);
+        peer?.close();
+        peersRef.current.delete(socketId);
+        setRemoteStreams((prev) => {
+          const next = { ...prev };
+          delete next[socketId];
+          return next;
+        });
+      });
+
+      socket.on("meeting:cohost-assigned", () => {
+        setIsCoHost(true);
+        message.success("Bạn đã được assign làm co-host");
+      });
+
+      socket.on("meeting:hand-lowered", () => {
+        setRaisedHand(false);
+        message.info("Host đã hạ tay của bạn");
+      });
+
+      socket.on("meeting:removed", ({ reason }) => {
+        message.warning(reason ?? "Bạn đã bị remove khỏi meeting");
+        if (onLeave) {
+          onLeave();
+        } else {
+          navigate("/dashboard");
+        }
+      });
+
+      socket.on("meeting:ended", () => {
+        message.info("Meeting đã được kết thúc bởi host");
+        if (onLeave) {
+          onLeave();
+        } else {
+          navigate("/dashboard");
+        }
+      });
+
+      socket.on("meeting:chat", (payload) => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            sender: payload.sender,
+            message: payload.message,
+            fileData: payload.fileData,
+            fileName: payload.fileName,
+            fileType: payload.fileType,
+            sticker: payload.sticker,
+            createdAt: payload.createdAt,
+          },
+        ]);
+      });
+
+      socket.on("meeting:draw", (payload: any) => {
+        if (payload.isClear) {
+          clearCanvasLocally();
+        } else {
+          drawOnCanvas(payload.prevX, payload.prevY, payload.x, payload.y, payload.color, payload.size);
+        }
+      });
+
+      socket.on("meeting:webrtc-offer", async ({ fromSocketId, offer }) => {
+        createPeerConnection(fromSocketId, false);
+        const peer = peersRef.current.get(fromSocketId);
+        if (!peer) {
+          return;
+        }
+
+        await peer.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+
+        socket?.emit("meeting:webrtc-answer", {
+          meetingId,
+          toSocketId: fromSocketId,
+          fromSocketId: socket.id,
+          answer,
+        });
+      });
+
+      socket.on("meeting:webrtc-answer", async ({ fromSocketId, answer }) => {
+        const peer = peersRef.current.get(fromSocketId);
+        if (!peer) {
+          return;
+        }
+
+        await peer.setRemoteDescription(new RTCSessionDescription(answer));
+      });
+
+      socket.on("meeting:webrtc-ice", async ({ fromSocketId, candidate }) => {
+        const peer = peersRef.current.get(fromSocketId);
+        if (!peer || !candidate) {
+          return;
+        }
+
+        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      });
+    };
+
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: true })
       .then((stream) => {
+        if (!isMounted) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-
-        // If peers already exist, publish camera/mic tracks immediately and renegotiate.
-        for (const [remoteSocketId] of peersRef.current.entries()) {
-          void ensureLocalTracksOnPeer(remoteSocketId).then(() => renegotiatePeer(remoteSocketId));
-        }
+        setActiveLocalStream(stream);
       })
       .catch(() => {
-        message.warning("Không truy cập được camera/microphone, meeting vẫn có thể dùng chat.");
+        if (isMounted) {
+          message.warning("Không truy cập được camera/microphone, meeting vẫn có thể dùng chat.");
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          startSignaling();
+        }
       });
-
-    const socket = io(import.meta.env.VITE_API_BASE_URL?.replace("/api", "") ?? "http://localhost:4000", {
-      auth: { token },
-      transports: ["websocket"],
-    });
-
-    socketRef.current = socket;
-
-    socket.on("connect", () => {
-      socket.emit("meeting:request-join", {
-        meetingId,
-        userId: user.id,
-        name: user.fullName,
-      });
-    });
-
-    socket.on("meeting:waiting-room", () => {
-      setWaitingRoom(true);
-      setJoined(false);
-    });
-
-    socket.on("meeting:not-started", ({ startsAt: nextStartsAt }) => {
-      setStartsAt(new Date(nextStartsAt).toISOString());
-      setJoined(false);
-      setWaitingRoom(false);
-    });
-
-    socket.on("meeting:join-approved", ({ isHost: host, isCoHost: coHost, participants: existingParticipants }) => {
-      setStartsAt(null);
-      setWaitingRoom(false);
-      setJoined(true);
-      setIsHost(Boolean(host));
-      setIsCoHost(Boolean(coHost));
-      setParticipants((existingParticipants ?? []).filter((participant: ParticipantState) => participant.socketId !== socket.id));
-
-      for (const participant of existingParticipants ?? []) {
-        createPeerConnection(participant.socketId, true);
-        void ensureLocalTracksOnPeer(participant.socketId).then(() => renegotiatePeer(participant.socketId));
-      }
-    });
-
-    socket.on("meeting:join-denied", ({ reason }) => {
-      message.error(reason ?? "Không thể tham gia room");
-      if (onLeave) {
-        onLeave();
-      } else {
-        navigate("/dashboard");
-      }
-    });
-
-    socket.on("meeting:participants-updated", (items: ParticipantState[]) => {
-      setParticipants(items.filter((participant) => participant.socketId !== socket.id));
-    });
-
-    socket.on("meeting:waiting-updated", (items: ParticipantState[]) => {
-      setWaitingParticipants(items);
-    });
-
-    socket.on("meeting:participant-joined", (participant: ParticipantState) => {
-      if (participant.socketId === socket.id) {
-        return;
-      }
-
-      // The newly joined user creates offers from join-approved; existing members wait for offer and answer.
-      createPeerConnection(participant.socketId, false);
-      void ensureLocalTracksOnPeer(participant.socketId);
-    });
-
-    socket.on("meeting:participant-left", ({ socketId }) => {
-      const peer = peersRef.current.get(socketId);
-      peer?.close();
-      peersRef.current.delete(socketId);
-      setRemoteStreams((prev) => {
-        const next = { ...prev };
-        delete next[socketId];
-        return next;
-      });
-    });
-
-    socket.on("meeting:cohost-assigned", () => {
-      setIsCoHost(true);
-      message.success("Bạn đã được assign làm co-host");
-    });
-
-    socket.on("meeting:hand-lowered", () => {
-      setRaisedHand(false);
-      message.info("Host đã hạ tay của bạn");
-    });
-
-    socket.on("meeting:removed", ({ reason }) => {
-      message.warning(reason ?? "Bạn đã bị remove khỏi meeting");
-      if (onLeave) {
-        onLeave();
-      } else {
-        navigate("/dashboard");
-      }
-    });
-
-    socket.on("meeting:ended", () => {
-      message.info("Meeting đã được kết thúc bởi host");
-      if (onLeave) {
-        onLeave();
-      } else {
-        navigate("/dashboard");
-      }
-    });
-
-    socket.on("meeting:chat", (payload) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          sender: payload.sender,
-          message: payload.message,
-          fileData: payload.fileData,
-          fileName: payload.fileName,
-          fileType: payload.fileType,
-          sticker: payload.sticker,
-          createdAt: payload.createdAt,
-        },
-      ]);
-    });
-
-    socket.on("meeting:draw", (payload: any) => {
-      if (payload.isClear) {
-        clearCanvasLocally();
-      } else {
-        drawOnCanvas(payload.prevX, payload.prevY, payload.x, payload.y, payload.color, payload.size);
-      }
-    });
-
-    socket.on("meeting:webrtc-offer", async ({ fromSocketId, offer }) => {
-      createPeerConnection(fromSocketId, false);
-      const peer = peersRef.current.get(fromSocketId);
-      if (!peer) {
-        return;
-      }
-
-      await peer.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-
-      socket.emit("meeting:webrtc-answer", {
-        meetingId,
-        toSocketId: fromSocketId,
-        fromSocketId: socket.id,
-        answer,
-      });
-    });
-
-    socket.on("meeting:webrtc-answer", async ({ fromSocketId, answer }) => {
-      const peer = peersRef.current.get(fromSocketId);
-      if (!peer) {
-        return;
-      }
-
-      await peer.setRemoteDescription(new RTCSessionDescription(answer));
-    });
-
-    socket.on("meeting:webrtc-ice", async ({ fromSocketId, candidate }) => {
-      const peer = peersRef.current.get(fromSocketId);
-      if (!peer || !candidate) {
-        return;
-      }
-
-      await peer.addIceCandidate(new RTCIceCandidate(candidate));
-    });
 
     return () => {
-      socket.disconnect();
+      isMounted = false;
+      if (socket) {
+        socket.disconnect();
+      }
+      socketRef.current = null;
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
       peersRef.current.forEach((peer) => peer.close());
       peersRef.current.clear();
@@ -709,9 +804,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
         return;
       }
 
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = display;
-      }
+      setActiveLocalStream(display);
 
       for (const [remoteSocketId] of peersRef.current.entries()) {
         await switchOutgoingVideoTrack(remoteSocketId, screenTrack, display);
@@ -725,8 +818,8 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
           return;
         }
 
-        if (localVideoRef.current && localStreamRef.current) {
-          localVideoRef.current.srcObject = localStreamRef.current;
+        if (localStreamRef.current) {
+          setActiveLocalStream(localStreamRef.current);
         }
 
         for (const [remoteSocketId] of peersRef.current.entries()) {
@@ -1082,19 +1175,13 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
               playsInline
               style={{ width: "100%", height: "100%", objectFit: "cover" }}
               ref={(node) => {
-                if (node) {
+                if (node && node.srcObject !== firstRemoteStream) {
                   node.srcObject = firstRemoteStream;
                 }
               }}
             />
           ) : (
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
+            renderLocalVideo("100%", 48)
           )}
           <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", background: "rgba(0,0,0,0.5)", borderRadius: 6, color: "#fff", fontSize: 11 }}>
             {activeName}
@@ -1236,7 +1323,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
             ) : layoutMode === "grid" ? (
               <div className="video-grid">
                 <div className="video-card">
-                  <video ref={localVideoRef} autoPlay muted playsInline className="meeting-video" />
+                  {renderLocalVideo("200px", 64)}
                   <div className="video-overlay-name">
                     <span>You ({user.fullName})</span>
                   </div>
@@ -1268,16 +1355,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
 
                   return (
                     <div className="video-card" key={socketId}>
-                      <video
-                        autoPlay
-                        playsInline
-                        className="meeting-video"
-                        ref={(node) => {
-                          if (node) {
-                            node.srcObject = stream;
-                          }
-                        }}
-                      />
+                      {renderRemoteVideo(socketId, stream, "200px", 64)}
                       <div className="video-overlay-name">
                         <span>{name}</span>
                         {pRaisedHand && <span style={{ color: "#ffe58f" }}>✋</span>}
@@ -1313,18 +1391,9 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
                   return (
                     <div className="video-card" style={{ width: "100%", height: 420, position: "relative", borderRadius: 12, overflow: "hidden", background: "#121824", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
                       {activeFocusId === "local" ? (
-                        <video ref={localVideoRef} autoPlay muted playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                        renderLocalVideo("420px", 96)
                       ) : (
-                        <video
-                          autoPlay
-                          playsInline
-                          style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                          ref={(node) => {
-                            if (node && focusRemoteStream) {
-                              node.srcObject = focusRemoteStream;
-                            }
-                          }}
-                        />
+                        renderRemoteVideo(activeFocusId, focusRemoteStream, "420px", 96)
                       )}
                       <div className="video-overlay-name">
                         <span>{focusName}</span>
@@ -1349,7 +1418,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
                       style={{ width: 140, height: 100, flexShrink: 0, position: "relative", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)" }}
                       onClick={() => setFocusSocketId("local")}
                     >
-                      <video ref={localVideoRef} autoPlay muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      {renderLocalVideo("100px", 40)}
                       <div style={{ position: "absolute", bottom: 4, left: 4, background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "1px 4px", fontSize: 10, color: "#fff" }}>
                         You
                       </div>
@@ -1366,16 +1435,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
                         style={{ width: 140, height: 100, flexShrink: 0, position: "relative", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)" }}
                         onClick={() => setFocusSocketId(socketId)}
                       >
-                        <video
-                          autoPlay
-                          playsInline
-                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                          ref={(node) => {
-                            if (node) {
-                              node.srcObject = stream;
-                            }
-                          }}
-                        />
+                        {renderRemoteVideo(socketId, stream, "100px", 40)}
                         <div style={{ position: "absolute", bottom: 4, left: 4, background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "1px 4px", fontSize: 10, color: "#fff" }}>
                           {name}
                         </div>
