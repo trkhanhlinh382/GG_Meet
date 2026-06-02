@@ -251,7 +251,7 @@ export function LandingPage() {
         }}
       >
         <Typography.Paragraph style={{ color: "var(--text-secondary)", fontSize: 13, margin: 0 }}>
-          © 2026 GG Meet. Đồ án Luận án Tốt nghiệp CNTT-K65.
+          © 2026 GG Meet.
         </Typography.Paragraph>
         <Typography.Paragraph
           style={{ color: "var(--text-muted)", fontSize: 11, margin: "6px 0 0 0" }}
