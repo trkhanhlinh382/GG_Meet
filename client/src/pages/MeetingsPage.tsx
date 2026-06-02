@@ -1,6 +1,5 @@
 import {
   CalendarOutlined,
-  ClockCircleOutlined,
   MailOutlined,
   PlusOutlined,
   ThunderboltOutlined,
