@@ -1,6 +1,6 @@
 import { Schema, Types, model } from "mongoose";
 
-export type InvitationStatus = "pending" | "accepted" | "rejected" | "maybe";
+export type InvitationStatus = "pending" | "accepted" | "rejected";
 
 interface Invitation {
   meetingId: Types.ObjectId;
@@ -12,7 +12,7 @@ const invitationSchema = new Schema<Invitation>(
   {
     meetingId: { type: Schema.Types.ObjectId, ref: "Meeting", required: true },
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    status: { type: String, enum: ["pending", "accepted", "rejected", "maybe"], default: "pending" },
+    status: { type: String, enum: ["pending", "accepted", "rejected"], default: "pending" },
   },
   { timestamps: true },
 );

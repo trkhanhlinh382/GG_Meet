@@ -30,7 +30,7 @@ export interface Invitation {
 
 export interface InvitationWithMeeting {
   _id: string;
-  status: "pending" | "accepted" | "rejected" | "maybe";
+  status: "pending" | "accepted" | "rejected";
   meetingId: Meeting;
   userId: { _id: string; fullName: string; email: string } | string;
 }
@@ -85,7 +85,7 @@ export interface MeetingMessage {
 
 export interface MeetingInvitationItem {
   _id: string;
-  status: "pending" | "accepted" | "rejected" | "maybe";
+  status: "pending" | "accepted" | "rejected";
   userId: { _id: string; fullName: string; email: string } | string;
 }
 

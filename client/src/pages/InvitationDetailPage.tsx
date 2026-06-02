@@ -4,7 +4,6 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   LockOutlined,
-  QuestionCircleOutlined,
   TeamOutlined,
   UnlockOutlined,
   UserOutlined,
@@ -43,7 +42,6 @@ const STATUS_LABELS: Record<string, string> = {
   pending: "Chờ phản hồi",
   accepted: "Đã chấp nhận",
   rejected: "Đã từ chối",
-  maybe: "Có thể tham gia",
 };
 
 export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProps) {
@@ -72,7 +70,7 @@ export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProp
       .finally(() => setLoading(false));
   }, [id]);
 
-  const handleAction = async (status: "accepted" | "rejected" | "maybe") => {
+  const handleAction = async (status: "accepted" | "rejected") => {
     if (!id) return;
     setActing(true);
     try {
@@ -81,7 +79,6 @@ export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProp
       const labels: Record<string, string> = {
         accepted: "Đã chấp nhận lời mời",
         rejected: "Đã từ chối lời mời",
-        maybe: "Đã trả lời 'Có thể'",
       };
       void message.success(labels[status]);
     } catch {
@@ -159,7 +156,6 @@ export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProp
   const timeUntilStart = isUpcoming ? startTime.diff(now, "minute") : 0;
 
   const isAccepted = invitation.status === "accepted";
-  const isMaybe = invitation.status === "maybe";
   const isRejected = invitation.status === "rejected";
 
   const hostName =
@@ -206,16 +202,12 @@ export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProp
                   ? "rgba(34,197,94,0.12)"
                   : invitation.status === "rejected"
                   ? "rgba(239,68,68,0.12)"
-                  : invitation.status === "maybe"
-                  ? "rgba(245,158,11,0.12)"
                   : "rgba(71,85,105,0.15)",
               color:
                 invitation.status === "accepted"
                   ? "var(--accent-success)"
                   : invitation.status === "rejected"
                   ? "var(--accent-danger)"
-                  : invitation.status === "maybe"
-                  ? "var(--accent-warn)"
                   : "var(--text-muted)",
               border: "none",
               borderRadius: "var(--r-xs)",
@@ -413,25 +405,6 @@ export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProp
                 }}
               >
                 Chấp nhận
-              </Button>
-              <Button
-                size="large"
-                loading={acting}
-                icon={<QuestionCircleOutlined />}
-                onClick={() => void handleAction("maybe")}
-                style={{
-                  flex: 1,
-                  minWidth: 120,
-                  background: isMaybe ? "rgba(245,158,11,0.15)" : "var(--bg-surface-2)",
-                  border: isMaybe
-                    ? "1px solid var(--accent-warn)"
-                    : "1px solid var(--border-strong)",
-                  color: isMaybe ? "var(--accent-warn)" : "var(--text-primary)",
-                  borderRadius: "var(--r-sm)",
-                  fontWeight: 600,
-                }}
-              >
-                Có thể
               </Button>
               <Button
                 size="large"

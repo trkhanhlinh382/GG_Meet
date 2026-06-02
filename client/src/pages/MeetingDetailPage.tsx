@@ -891,16 +891,12 @@ export const MeetingDetailPage = ({ token, user }: MeetingDetailPageProps) => {
                           ? { bg: "rgba(34,197,94,0.12)", text: "var(--accent-success)", border: "rgba(34,197,94,0.25)" }
                           : item.status === "rejected"
                           ? { bg: "rgba(239,68,68,0.12)", text: "var(--accent-danger)", border: "rgba(239,68,68,0.25)" }
-                          : item.status === "maybe"
-                          ? { bg: "rgba(56,189,248,0.12)", text: "var(--accent-info)", border: "rgba(56,189,248,0.25)" }
                           : { bg: "rgba(245,158,11,0.12)", text: "var(--accent-warn)", border: "rgba(245,158,11,0.25)" };
                       const statusLabel =
                         item.status === "accepted"
                           ? "Đã đồng ý"
                           : item.status === "rejected"
                           ? "Từ chối"
-                          : item.status === "maybe"
-                          ? "Có thể"
                           : "Chưa phản hồi";
 
                       return (

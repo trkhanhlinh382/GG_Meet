@@ -46,7 +46,7 @@ const updateInvitationStatus = async (invitationId, userId, status) => {
     const invitedUser = populated?.userId;
     if (meeting && invitedUser) {
         const hostUserId = meeting.ownerId?._id || meeting.ownerId;
-        const statusLabel = status === "accepted" ? "chấp nhận" : status === "rejected" ? "từ chối" : "phân vân";
+        const statusLabel = status === "accepted" ? "chấp nhận" : "từ chối";
         await notification_model_1.NotificationModel.create({
             userId: hostUserId,
             title: "Phản hồi lời mời cuộc họp",
@@ -105,23 +105,6 @@ exports.invitationRouter.post("/:id/reject", auth_1.requireAuth, async (req, res
         return;
     }
     const result = await updateInvitationStatus(req.params.id, userId, "rejected");
-    if ("notFound" in result) {
-        res.status(404).json({ message: "Invitation not found" });
-        return;
-    }
-    if ("forbidden" in result) {
-        res.status(403).json({ message: "Forbidden" });
-        return;
-    }
-    res.json(result.invitation);
-});
-exports.invitationRouter.post("/:id/maybe", auth_1.requireAuth, async (req, res) => {
-    const userId = req.user?.id;
-    if (!userId) {
-        res.status(401).json({ message: "Unauthorized" });
-        return;
-    }
-    const result = await updateInvitationStatus(req.params.id, userId, "maybe");
     if ("notFound" in result) {
         res.status(404).json({ message: "Invitation not found" });
         return;
