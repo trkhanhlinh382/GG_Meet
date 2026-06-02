@@ -317,7 +317,7 @@ export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProp
               <ClockCircleOutlined /> Kết thúc
             </div>
             <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-              {endTime.format("HH:mm, DD/MM/YYYY")}
+              {endTime.year() > 2090 ? "Vô hạn (Không giới hạn)" : endTime.format("HH:mm, DD/MM/YYYY")}
             </div>
           </div>
 

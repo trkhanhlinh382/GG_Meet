@@ -61,6 +61,22 @@ const getHostLabel = (ownerId: Meeting["ownerId"]) => {
   return "Không rõ host";
 };
 
+export const formatMeetingTimeRange = (startTime: string, endTime: string) => {
+  const start = dayjs(startTime);
+  const end = dayjs(endTime);
+  const isInfinite = end.year() > 2090;
+
+  if (isInfinite) {
+    return `${start.format("HH:mm, DD/MM/YYYY")} (Vô hạn)`;
+  }
+
+  if (start.isSame(end, "day")) {
+    return `${start.format("HH:mm")} – ${end.format("HH:mm")}, ${start.format("DD/MM/YYYY")}`;
+  }
+
+  return `${start.format("HH:mm, DD/MM/YYYY")} – ${end.format("HH:mm, DD/MM/YYYY")}`;
+};
+
 export const MeetingsPage = ({ data, onCreateMeeting, onJoinMeeting }: MeetingsPageProps) => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("all");
@@ -117,15 +133,17 @@ export const MeetingsPage = ({ data, onCreateMeeting, onJoinMeeting }: MeetingsP
   const handleCreateMeeting = async () => {
     try {
       const values = await createForm.validateFields();
-      const [start, end] = values.timeRange as [Dayjs, Dayjs];
+      const start = values.startTime as Dayjs;
+      const duration = values.duration;
 
       if (start.isBefore(dayjs())) {
         void message.warning("Thời gian bắt đầu phải ở tương lai");
         return;
       }
-      if (!end.isAfter(start)) {
-        void message.warning("Thời gian kết thúc phải sau thời gian bắt đầu");
-        return;
+
+      let endTimeStr = "2099-12-31T23:59:59Z";
+      if (duration && duration !== "infinite") {
+        endTimeStr = start.add(Number(duration), "minute").toISOString();
       }
 
       setCreating(true);
@@ -134,7 +152,7 @@ export const MeetingsPage = ({ data, onCreateMeeting, onJoinMeeting }: MeetingsP
         description: values.description as string | undefined,
         category: values.category as CreateMeetingInput["category"],
         startTime: start.toISOString(),
-        endTime: end.toISOString(),
+        endTime: endTimeStr,
         privacyMode: values.privacyMode as "public" | "private",
         waitingRoomEnabled: Boolean(values.waitingRoomEnabled),
         isRecurring: Boolean(values.isRecurring),
@@ -205,12 +223,7 @@ export const MeetingsPage = ({ data, onCreateMeeting, onJoinMeeting }: MeetingsP
           <span>{getHostLabel(meeting.ownerId)}</span>
           <span style={{ color: "var(--border-strong)" }}>•</span>
           <CalendarOutlined style={{ fontSize: 11 }} />
-          <span>{dayjs(meeting.startTime).format("DD/MM/YYYY")}</span>
-          <span style={{ color: "var(--border-strong)" }}>•</span>
-          <ClockCircleOutlined style={{ fontSize: 11 }} />
-          <span>
-            {dayjs(meeting.startTime).format("HH:mm")} – {dayjs(meeting.endTime).format("HH:mm")}
-          </span>
+          <span>{formatMeetingTimeRange(meeting.startTime, meeting.endTime)}</span>
         </div>
 
         <div
@@ -533,7 +546,8 @@ export const MeetingsPage = ({ data, onCreateMeeting, onJoinMeeting }: MeetingsP
             privacyMode: "private",
             waitingRoomEnabled: true,
             isRecurring: false,
-            timeRange: [dayjs().add(30, "minute"), dayjs().add(90, "minute")],
+            startTime: dayjs().add(30, "minute"),
+            duration: 60,
           }}
         >
           <Form.Item
@@ -565,11 +579,31 @@ export const MeetingsPage = ({ data, onCreateMeeting, onJoinMeeting }: MeetingsP
           </Form.Item>
 
           <Form.Item
-            name="timeRange"
-            label="Thời gian bắt đầu / kết thúc"
-            rules={[{ required: true, message: "Vui lòng chọn thời gian" }]}
+            name="startTime"
+            label="Thời gian bắt đầu"
+            rules={[{ required: true, message: "Vui lòng chọn thời gian bắt đầu" }]}
           >
-            <DatePicker.RangePicker showTime style={{ width: "100%" }} />
+            <DatePicker showTime style={{ width: "100%" }} format="DD/MM/YYYY HH:mm" />
+          </Form.Item>
+
+          <Form.Item
+            name="duration"
+            label="Thời lượng cuộc họp"
+          >
+            <Select
+              placeholder="Vô hạn (Đến khi Host kết thúc)"
+              allowClear
+              options={[
+                { value: 15, label: "15 phút" },
+                { value: 30, label: "30 phút" },
+                { value: 45, label: "45 phút" },
+                { value: 60, label: "1 giờ" },
+                { value: 90, label: "1.5 giờ" },
+                { value: 120, label: "2 giờ" },
+                { value: 180, label: "3 giờ" },
+                { value: "infinite", label: "Vô hạn (Đến khi Host kết thúc)" },
+              ]}
+            />
           </Form.Item>
 
           <Form.Item

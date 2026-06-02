@@ -7,6 +7,7 @@ const auth_1 = require("../middleware/auth");
 const invitation_model_1 = require("../models/invitation.model");
 const meeting_model_1 = require("../models/meeting.model");
 const user_model_1 = require("../models/user.model");
+const notification_model_1 = require("../models/notification.model");
 const mailer_1 = require("../config/mailer");
 const meeting_message_model_1 = require("../models/meeting-message.model");
 const meetingRealtime_1 = require("../realtime/meetingRealtime");
@@ -119,6 +120,13 @@ exports.meetingRouter.post("/", auth_1.requireAuth, async (req, res) => {
                     meetingId: meeting.id,
                     userId: p,
                 })));
+                // Create database notifications for invited users
+                const notifPromises = filteredParticipants.map((p) => notification_model_1.NotificationModel.create({
+                    userId: p,
+                    title: "Lời mời cuộc họp mới",
+                    content: `Bạn nhận được lời mời tham gia cuộc họp "${meeting.title}" diễn ra vào lúc ${new Date(occ.startTime).toLocaleString("vi-VN")}`,
+                }));
+                await Promise.all(notifPromises).catch(() => undefined);
                 user_model_1.UserModel.find({ _id: { $in: filteredParticipants } }, "email")
                     .then((users) => {
                     users.forEach((u) => {
@@ -248,6 +256,13 @@ exports.meetingRouter.post("/:id/invite", auth_1.requireAuth, async (req, res) =
             },
         }, { new: true, upsert: true });
     }));
+    // Create database notifications for newly invited users
+    const notifPromises = participantIds.map((pId) => notification_model_1.NotificationModel.create({
+        userId: pId,
+        title: "Lời mời cuộc họp mới",
+        content: `Bạn nhận được lời mời tham gia cuộc họp "${meeting.title}" diễn ra vào lúc ${new Date(meeting.startTime).toLocaleString("vi-VN")}`,
+    }));
+    await Promise.all(notifPromises).catch(() => undefined);
     res.status(201).json(invitations.filter(Boolean));
 });
 exports.meetingRouter.patch("/:id/privacy", auth_1.requireAuth, async (req, res) => {
@@ -350,6 +365,29 @@ exports.meetingRouter.put("/:id", auth_1.requireAuth, async (req, res) => {
     if (data.password !== undefined)
         meeting.password = data.password;
     await meeting.save();
+    // Create notifications for invited users about the update
+    try {
+        const invitations = await invitation_model_1.InvitationModel.find({ meetingId: meeting.id });
+        const inviteeIds = invitations.map((inv) => inv.userId.toString());
+        if (inviteeIds.length) {
+            const timeStr = new Date(meeting.startTime).toLocaleString("vi-VN", {
+                hour: "2-digit",
+                minute: "2-digit",
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+            });
+            const notifPromises = inviteeIds.map((pId) => notification_model_1.NotificationModel.create({
+                userId: pId,
+                title: "Cập nhật thông tin cuộc họp",
+                content: `Cuộc họp "${meeting.title}" đã được cập nhật thông tin mới. Thời gian diễn ra: ${timeStr}.`,
+            }));
+            await Promise.all(notifPromises);
+        }
+    }
+    catch (err) {
+        console.error("Lỗi gửi thông báo cập nhật:", err);
+    }
     res.json({
         message: "Cập nhật cuộc họp thành công",
         meeting,
@@ -370,7 +408,8 @@ exports.meetingRouter.post("/:id/messages", auth_1.requireAuth, async (req, res)
     const isParticipant = Array.isArray(meeting.participants)
         ? meeting.participants.map((id) => id.toString()).includes(userId)
         : false;
-    if (!isOwner && !isParticipant) {
+    const hasInvitation = await invitation_model_1.InvitationModel.exists({ meetingId: meeting.id, userId });
+    if (!isOwner && !isParticipant && !hasInvitation) {
         res.status(403).json({ message: "Forbidden" });
         return;
     }
@@ -409,7 +448,8 @@ exports.meetingRouter.patch("/:id/messages/:messageId/pin", auth_1.requireAuth, 
     const isParticipant = Array.isArray(meeting.participants)
         ? meeting.participants.map((id) => id.toString()).includes(userId)
         : false;
-    if (!isOwner && !isParticipant) {
+    const hasInvitation = await invitation_model_1.InvitationModel.exists({ meetingId: meeting.id, userId });
+    if (!isOwner && !isParticipant && !hasInvitation) {
         res.status(403).json({ message: "Forbidden" });
         return;
     }
@@ -485,6 +525,16 @@ exports.meetingRouter.delete("/:id", auth_1.requireAuth, async (req, res) => {
         res.status(403).json({ message: "Only host can delete the meeting" });
         return;
     }
+    const invitations = await invitation_model_1.InvitationModel.find({ meetingId: req.params.id });
+    const inviteeIds = invitations.map((inv) => inv.userId);
+    if (inviteeIds.length) {
+        const notifPromises = inviteeIds.map((pId) => notification_model_1.NotificationModel.create({
+            userId: pId,
+            title: "Cuộc họp đã hủy",
+            content: `Cuộc họp "${meeting.title}" đã bị hủy bởi người tổ chức.`,
+        }));
+        await Promise.all(notifPromises).catch(() => undefined);
+    }
     await meeting_model_1.MeetingModel.findByIdAndDelete(req.params.id);
     await invitation_model_1.InvitationModel.deleteMany({ meetingId: req.params.id });
     res.json({ message: "Xóa cuộc họp thành công" });
@@ -507,6 +557,12 @@ exports.meetingRouter.delete("/:id/kick/:userId", auth_1.requireAuth, async (req
     const targetUserId = req.params.userId;
     meeting.participants = meeting.participants.filter((id) => id.toString() !== targetUserId);
     await meeting.save();
+    // Create kicked notification for the target user
+    await notification_model_1.NotificationModel.create({
+        userId: targetUserId,
+        title: "Bị xóa khỏi cuộc họp",
+        content: `Bạn đã bị xóa khỏi cuộc họp "${meeting.title}" bởi người tổ chức.`,
+    }).catch(() => undefined);
     await invitation_model_1.InvitationModel.deleteMany({ meetingId: req.params.id, userId: targetUserId });
     res.json({ message: "Kick thành viên thành công" });
 });

@@ -171,11 +171,17 @@ export const MeetingDetailPage = ({ token, user }: MeetingDetailPageProps) => {
   /* ─── Edit meeting ───────────────────────────────────────── */
   const handleOpenEdit = () => {
     if (!detail?.meeting) return;
+    const start = dayjs(detail.meeting.startTime);
+    const end = dayjs(detail.meeting.endTime);
+    const isInfinite = end.year() > 2090;
+    const duration = isInfinite ? "infinite" : end.diff(start, "minute");
+
     editForm.setFieldsValue({
       title: detail.meeting.title,
       description: detail.meeting.description,
       category: detail.meeting.category,
-      timeRange: [dayjs(detail.meeting.startTime), dayjs(detail.meeting.endTime)],
+      startTime: start,
+      duration: duration,
       privacyMode: detail.meeting.privacyMode,
       waitingRoomEnabled: detail.meeting.waitingRoomEnabled,
       recordingEnabled: detail.meeting.recordingEnabled,
@@ -187,7 +193,14 @@ export const MeetingDetailPage = ({ token, user }: MeetingDetailPageProps) => {
     if (!id) return;
     try {
       const values = await editForm.validateFields();
-      const [start, end] = values.timeRange as [dayjs.Dayjs, dayjs.Dayjs];
+      const start = values.startTime as dayjs.Dayjs;
+      const duration = values.duration;
+      
+      let endTimeStr = "2099-12-31T23:59:59Z";
+      if (duration && duration !== "infinite") {
+        endTimeStr = start.add(Number(duration), "minute").toISOString();
+      }
+
       setUpdating(true);
       await http.put(
         `/meetings/${id}`,
@@ -196,7 +209,7 @@ export const MeetingDetailPage = ({ token, user }: MeetingDetailPageProps) => {
           description: values.description,
           category: values.category,
           startTime: start.toISOString(),
-          endTime: end.toISOString(),
+          endTime: endTimeStr,
           privacyMode: values.privacyMode,
           waitingRoomEnabled: values.waitingRoomEnabled,
           recordingEnabled: values.recordingEnabled,
@@ -552,7 +565,9 @@ export const MeetingDetailPage = ({ token, user }: MeetingDetailPageProps) => {
                             <Typography.Text
                               style={{ color: "var(--text-primary)", fontWeight: 500 }}
                             >
-                              {dayjs(detail.meeting.endTime).format("DD/MM/YYYY HH:mm")}
+                              {dayjs(detail.meeting.endTime).year() > 2090
+                                ? "Vô hạn (Không giới hạn)"
+                                : dayjs(detail.meeting.endTime).format("DD/MM/YYYY HH:mm")}
                             </Typography.Text>
                           </div>
                         </Col>
@@ -1488,11 +1503,30 @@ export const MeetingDetailPage = ({ token, user }: MeetingDetailPageProps) => {
             />
           </Form.Item>
           <Form.Item
-            name="timeRange"
-            label="Thời gian diễn ra"
-            rules={[{ required: true, message: "Vui lòng chọn thời gian" }]}
+            name="startTime"
+            label="Thời gian bắt đầu"
+            rules={[{ required: true, message: "Vui lòng chọn thời gian bắt đầu" }]}
           >
-            <DatePicker.RangePicker showTime style={{ width: "100%" }} />
+            <DatePicker showTime style={{ width: "100%" }} format="DD/MM/YYYY HH:mm" />
+          </Form.Item>
+          <Form.Item
+            name="duration"
+            label="Thời lượng cuộc họp"
+          >
+            <Select
+              placeholder="Vô hạn (Đến khi Host kết thúc)"
+              allowClear
+              options={[
+                { value: 15, label: "15 phút" },
+                { value: 30, label: "30 phút" },
+                { value: 45, label: "45 phút" },
+                { value: 60, label: "1 giờ" },
+                { value: 90, label: "1.5 giờ" },
+                { value: 120, label: "2 giờ" },
+                { value: 180, label: "3 giờ" },
+                { value: "infinite", label: "Vô hạn (Đến khi Host kết thúc)" },
+              ]}
+            />
           </Form.Item>
           <Form.Item
             name="privacyMode"

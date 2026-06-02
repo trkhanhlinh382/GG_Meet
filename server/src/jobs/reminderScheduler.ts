@@ -11,10 +11,10 @@ interface ReminderRule {
 }
 
 const reminderRules: ReminderRule[] = [
-  { type: "one_day", offsetMinutes: 24 * 60, title: "Meeting in 1 day" },
-  { type: "one_hour", offsetMinutes: 60, title: "Meeting in 1 hour" },
-  { type: "fifteen_minutes", offsetMinutes: 15, title: "Meeting in 15 minutes" },
-  { type: "start", offsetMinutes: 0, title: "Meeting started" },
+  { type: "one_day", offsetMinutes: 24 * 60, title: "Cuộc họp diễn ra sau 1 ngày" },
+  { type: "one_hour", offsetMinutes: 60, title: "Cuộc họp diễn ra sau 1 giờ" },
+  { type: "fifteen_minutes", offsetMinutes: 15, title: "Cuộc họp diễn ra sau 15 phút" },
+  { type: "start", offsetMinutes: 0, title: "Cuộc họp đã bắt đầu" },
 ];
 
 const shouldTriggerReminder = (startTime: Date, now: Date, offsetMinutes: number): boolean => {
@@ -56,10 +56,24 @@ export const startReminderScheduler = (): void => {
             continue;
           }
 
+          let content = "";
+          if (rule.type === "start") {
+            content = `Cuộc họp "${meeting.title}" đã bắt đầu. Hãy tham gia ngay!`;
+          } else {
+            const timeStr = new Date(meeting.startTime).toLocaleString("vi-VN", {
+              hour: "2-digit",
+              minute: "2-digit",
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+            });
+            content = `Cuộc họp "${meeting.title}" sẽ bắt đầu vào lúc ${timeStr}.`;
+          }
+
           await NotificationModel.create({
             userId,
             title: rule.title,
-            content: `${meeting.title} starts at ${meeting.startTime.toISOString()}`,
+            content,
             isRead: false,
           });
 

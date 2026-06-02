@@ -4,6 +4,7 @@ exports.invitationRouter = void 0;
 const express_1 = require("express");
 const auth_1 = require("../middleware/auth");
 const invitation_model_1 = require("../models/invitation.model");
+const notification_model_1 = require("../models/notification.model");
 exports.invitationRouter = (0, express_1.Router)();
 const meetingOwnerPopulate = { path: "ownerId", select: "fullName email" };
 const getInvitationUserId = (invitationUser) => {
@@ -40,6 +41,18 @@ const updateInvitationStatus = async (invitationId, userId, status) => {
     const populated = await invitation_model_1.InvitationModel.findById(invitation._id)
         .populate({ path: "meetingId", populate: meetingOwnerPopulate })
         .populate("userId", "fullName email");
+    // Create notification for the meeting host
+    const meeting = populated?.meetingId;
+    const invitedUser = populated?.userId;
+    if (meeting && invitedUser) {
+        const hostUserId = meeting.ownerId?._id || meeting.ownerId;
+        const statusLabel = status === "accepted" ? "chấp nhận" : status === "rejected" ? "từ chối" : "phân vân";
+        await notification_model_1.NotificationModel.create({
+            userId: hostUserId,
+            title: "Phản hồi lời mời cuộc họp",
+            content: `${invitedUser.fullName} đã ${statusLabel} lời mời tham gia cuộc họp "${meeting.title}"`,
+        }).catch(() => undefined);
+    }
     return { invitation: populated };
 };
 exports.invitationRouter.get("/:id", auth_1.requireAuth, async (req, res) => {

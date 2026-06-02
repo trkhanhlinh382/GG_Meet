@@ -15,6 +15,12 @@ export const setAuthToken = (token?: string): void => {
   localStorage.removeItem("gg_meet_access_token");
 };
 
+let onUnauthorizedCallback: (() => void) | null = null;
+
+export const registerUnauthorizedCallback = (callback: () => void) => {
+  onUnauthorizedCallback = callback;
+};
+
 // Global 401 interceptor — redirect to login on expired/invalid token
 http.interceptors.response.use(
   (response) => response,
@@ -22,9 +28,13 @@ http.interceptors.response.use(
     if (axios.isAxiosError(error) && error.response?.status === 401) {
       setAuthToken(undefined);
       localStorage.removeItem("gg_meet_user");
-      // Avoid redirect loop if already on /login
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
+      if (onUnauthorizedCallback) {
+        onUnauthorizedCallback();
+      } else {
+        // Fallback if React hasn't registered callback yet
+        if (!window.location.pathname.startsWith("/login")) {
+          window.location.href = "/login";
+        }
       }
     }
     return Promise.reject(error);

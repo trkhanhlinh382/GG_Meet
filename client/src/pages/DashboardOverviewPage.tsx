@@ -57,6 +57,22 @@ const getHostLabel = (ownerId: DashboardPayload["upcomingMeetings"][number]["own
   return "Không rõ host";
 };
 
+const formatMeetingTimeRange = (startTime: string, endTime: string) => {
+  const start = dayjs(startTime);
+  const end = dayjs(endTime);
+  const isInfinite = end.year() > 2090;
+
+  if (isInfinite) {
+    return `${start.format("HH:mm, DD/MM/YYYY")} (Vô hạn)`;
+  }
+
+  if (start.isSame(end, "day")) {
+    return `${start.format("HH:mm")} – ${end.format("HH:mm")}, ${start.format("DD/MM/YYYY")}`;
+  }
+
+  return `${start.format("HH:mm, DD/MM/YYYY")} – ${end.format("HH:mm, DD/MM/YYYY")}`;
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   personal: "Cá nhân",
   interview: "Phỏng vấn",
@@ -116,16 +132,22 @@ export const DashboardOverviewPage = ({ data, onCreateMeeting, onJoinMeeting }: 
   const handleScheduledMeeting = async () => {
     try {
       const values = await scheduledForm.validateFields();
-      const [start, end] = values.timeRange as [dayjs.Dayjs, dayjs.Dayjs];
+      const start = values.startTime as dayjs.Dayjs;
+      const duration = values.duration;
       if (start.isBefore(dayjs())) { void message.warning("Thời gian bắt đầu phải ở tương lai"); return; }
-      if (!end.isAfter(start)) { void message.warning("Thời gian kết thúc phải sau bắt đầu"); return; }
+      
+      let endTimeStr = "2099-12-31T23:59:59Z";
+      if (duration && duration !== "infinite") {
+        endTimeStr = start.add(Number(duration), "minute").toISOString();
+      }
+
       setCreating(true);
       await onCreateMeeting({
         title: values.title,
         description: values.description,
         category: values.category,
         startTime: start.toISOString(),
-        endTime: end.toISOString(),
+        endTime: endTimeStr,
         privacyMode: values.privacyMode,
         waitingRoomEnabled: values.waitingRoomEnabled ?? false,
         isRecurring: values.isRecurring,
@@ -240,7 +262,7 @@ export const DashboardOverviewPage = ({ data, onCreateMeeting, onJoinMeeting }: 
                     <div className="meeting-card-meta">
                       <span>👤 {getHostLabel(meeting.ownerId)}</span>
                       <span>·</span>
-                      <span>🕐 {dayjs(meeting.startTime).format("HH:mm")} – {dayjs(meeting.endTime).format("HH:mm")}</span>
+                      <span>🕐 {formatMeetingTimeRange(meeting.startTime, meeting.endTime)}</span>
                       {meeting.category && <Tag style={{ margin: 0 }}>{CATEGORY_LABELS[meeting.category] ?? meeting.category}</Tag>}
                     </div>
                   </div>
@@ -351,7 +373,7 @@ export const DashboardOverviewPage = ({ data, onCreateMeeting, onJoinMeeting }: 
                       description={
                         meeting ? (
                           <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>
-                            {dayjs(meeting.startTime).format("DD/MM/YYYY HH:mm")} – {dayjs(meeting.endTime).format("HH:mm")}
+                            {formatMeetingTimeRange(meeting.startTime, meeting.endTime)}
                           </span>
                         ) : undefined
                       }
@@ -403,7 +425,7 @@ export const DashboardOverviewPage = ({ data, onCreateMeeting, onJoinMeeting }: 
           form={scheduledForm}
           layout="vertical"
           style={{ marginTop: 16 }}
-          initialValues={{ category: "team_meeting", privacyMode: "private", waitingRoomEnabled: true, timeRange: [dayjs().add(30, "minute"), dayjs().add(90, "minute")] }}
+          initialValues={{ category: "team_meeting", privacyMode: "private", waitingRoomEnabled: true, startTime: dayjs().add(30, "minute"), duration: 60 }}
         >
           <Form.Item name="title" label="Tên cuộc họp" rules={[{ required: true, message: "Nhập tên cuộc họp" }]}>
             <Input placeholder="Sprint planning, Daily standup…" />
@@ -429,8 +451,24 @@ export const DashboardOverviewPage = ({ data, onCreateMeeting, onJoinMeeting }: 
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="timeRange" label="Thời gian bắt đầu – kết thúc" rules={[{ required: true, message: "Chọn thời gian" }]}>
-            <DatePicker.RangePicker showTime style={{ width: "100%" }} format="DD/MM/YYYY HH:mm" />
+          <Form.Item name="startTime" label="Thời gian bắt đầu" rules={[{ required: true, message: "Chọn thời gian bắt đầu" }]}>
+            <DatePicker showTime style={{ width: "100%" }} format="DD/MM/YYYY HH:mm" />
+          </Form.Item>
+          <Form.Item name="duration" label="Thời lượng cuộc họp">
+            <Select
+              placeholder="Vô hạn (Không giới hạn thời gian)"
+              allowClear
+              options={[
+                { value: 15, label: "15 phút" },
+                { value: 30, label: "30 phút" },
+                { value: 45, label: "45 phút" },
+                { value: 60, label: "1 giờ" },
+                { value: 90, label: "1.5 giờ" },
+                { value: 120, label: "2 giờ" },
+                { value: 180, label: "3 giờ" },
+                { value: "infinite", label: "Vô hạn (Đến khi Host kết thúc)" },
+              ]}
+            />
           </Form.Item>
           <Space>
             <Form.Item name="waitingRoomEnabled" label="Phòng chờ" valuePropName="checked">

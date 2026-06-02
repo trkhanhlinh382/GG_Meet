@@ -28,7 +28,7 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
-import { http, setAuthToken } from "./api/http";
+import { http, setAuthToken, registerUnauthorizedCallback } from "./api/http";
 import type { DashboardPayload, Notification } from "./api/types";
 import { fetchNotifications, markNotificationAsRead } from "./api/notifications";
 import dayjs from "dayjs";
@@ -147,6 +147,12 @@ function App() {
     [navigate],
   );
 
+  useEffect(() => {
+    registerUnauthorizedCallback(() => {
+      clearSession(true);
+    });
+  }, [clearSession]);
+
   // ─── Dashboard fetch ──────────────────────────────────────────────────────
 
   const fetchDashboard = useCallback(async (): Promise<DashboardPayload | undefined> => {
@@ -190,7 +196,7 @@ function App() {
     fetchNotifications().then(setNotifications).catch(() => undefined);
   }, [fetchDashboard, token]);
 
-  // ─── On route change: refresh dashboard data ─────────────────────────────
+  // ─── On route change: refresh dashboard data & notifications ─────────────
 
   useEffect(() => {
     if (!token) return;
@@ -198,7 +204,10 @@ function App() {
       location.pathname.startsWith("/dashboard") ||
       location.pathname.startsWith("/meetings") ||
       location.pathname.startsWith("/schedule");
-    if (shouldRefresh) void fetchDashboard();
+    if (shouldRefresh) {
+      void fetchDashboard();
+      fetchNotifications().then(setNotifications).catch(() => undefined);
+    }
   }, [fetchDashboard, location.pathname, token]);
 
   // ─── Sidebar active key ────────────────────────────────────────────────────
@@ -438,6 +447,12 @@ function App() {
                   renderItem={(item: Notification) => (
                     <List.Item
                       style={{ padding: "10px 0", borderBottom: "1px solid var(--border)", cursor: "pointer", gap: 0 }}
+                      onClick={async () => {
+                        if (!item.isRead) {
+                          await markNotificationAsRead(item._id);
+                          setNotifications(await fetchNotifications());
+                        }
+                      }}
                       actions={
                         !item.isRead
                           ? [
@@ -463,12 +478,23 @@ function App() {
                           {!item.isRead && (
                             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", display: "inline-block", flexShrink: 0 }} />
                           )}
-                          <Typography.Text strong={!item.isRead} style={{ fontSize: 13 }}>
+                          <Typography.Text strong={!item.isRead} style={{ fontSize: 13, color: "var(--text-primary)" }}>
                             {item.title}
                           </Typography.Text>
                         </div>
+                        <Typography.Paragraph
+                          style={{
+                            fontSize: 12,
+                            color: "var(--text-secondary)",
+                            margin: "4px 0 0 0",
+                            paddingLeft: item.isRead ? 0 : 13,
+                            lineHeight: "1.4"
+                          }}
+                        >
+                          {item.content}
+                        </Typography.Paragraph>
                         {item.createdAt && (
-                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, paddingLeft: item.isRead ? 0 : 13 }}>
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, paddingLeft: item.isRead ? 0 : 13 }}>
                             {dayjs(item.createdAt).fromNow()}
                           </div>
                         )}
