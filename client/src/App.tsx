@@ -37,6 +37,7 @@ dayjs.extend(relativeTime);
 import { DashboardOverviewPage } from "./pages/DashboardOverviewPage";
 import { InvitationDetailPage } from "./pages/InvitationDetailPage";
 import { LoginPage } from "./pages/LoginPage";
+import { LandingPage } from "./pages/LandingPage";
 import { MeetingsPage } from "./pages/MeetingsPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage.tsx";
 import { MeetingRoomPage } from "./pages/MeetingRoomPage.tsx";
@@ -284,9 +285,15 @@ function App() {
     await joinMeetingById(meetingId);
   };
 
-  // ─── Unauth: show login ────────────────────────────────────────────────────
-
-  if (!token) return <LoginPage onLogin={handleLogin} />;
+  if (!token) {
+    return (
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    );
+  }
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
