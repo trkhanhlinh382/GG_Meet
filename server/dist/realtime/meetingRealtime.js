@@ -34,6 +34,7 @@ const getRoomState = (meetingId, hostUserId) => {
         locked: false,
         participants: new Map(),
         waiting: new Map(),
+        drawHistory: [],
     };
     rooms.set(meetingId, created);
     return created;
@@ -108,6 +109,9 @@ const registerMeetingRealtime = (io) => {
                 locked: state.locked,
                 participants: Array.from(state.participants.values()).filter((item) => item.socketId !== socket.id),
             });
+            if (state.drawHistory && state.drawHistory.length > 0) {
+                socket.emit("meeting:draw-history", state.drawHistory);
+            }
             socket.to(meetingId).emit("meeting:participant-joined", participant);
             io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
             io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
@@ -133,6 +137,9 @@ const registerMeetingRealtime = (io) => {
                 locked: state.locked,
                 participants: Array.from(state.participants.values()).filter((item) => item.socketId !== targetSocketId),
             });
+            if (state.drawHistory && state.drawHistory.length > 0) {
+                targetSocket?.emit("meeting:draw-history", state.drawHistory);
+            }
             socket.to(meetingId).emit("meeting:participant-joined", target);
             io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
             io.to(meetingId).emit("meeting:waiting-updated", Array.from(state.waiting.values()));
@@ -285,6 +292,15 @@ const registerMeetingRealtime = (io) => {
         });
         socket.on("meeting:draw", (payload) => {
             const { meetingId } = payload;
+            const state = rooms.get(meetingId);
+            if (state) {
+                if (payload.isClear) {
+                    state.drawHistory = [];
+                }
+                else {
+                    state.drawHistory.push(payload);
+                }
+            }
             socket.to(meetingId).emit("meeting:draw", payload);
         });
         socket.on("disconnect", () => {

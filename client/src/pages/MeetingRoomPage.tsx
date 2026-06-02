@@ -43,9 +43,9 @@ interface ChatMessage {
 
 interface VideoFeed {
   id: string;
-  type: "local" | "local-screen" | "remote" | "remote-screen";
+  type: "local" | "local-screen" | "remote" | "remote-screen" | "whiteboard";
   socketId: string;
-  stream: MediaStream;
+  stream?: MediaStream;
   name: string;
   micOn?: boolean;
   cameraOn?: boolean;
@@ -99,6 +99,14 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   const screenStreamRef = useRef<MediaStream | null>(null);
   const [remoteScreenStreams, setRemoteScreenStreams] = useState<Record<string, MediaStream>>({});
   const allRemoteStreamsRef = useRef<Map<string, Set<MediaStream>>>(new Map());
+  const whiteboardCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 800;
+    canvas.height = 500;
+    whiteboardCanvasRef.current = canvas;
+  }, []);
 
   const isHostLike = isHost || isCoHost;
 
@@ -190,6 +198,17 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
       });
     }
 
+    if (showWhiteboard) {
+      feeds.push({
+        id: "whiteboard",
+        type: "whiteboard",
+        socketId: socketRef.current?.id || "local",
+        name: "Bảng vẽ chung",
+        micOn: false,
+        cameraOn: true,
+      });
+    }
+
     participants.forEach((p) => {
       const camStream = remoteStreams[p.socketId];
       if (camStream) {
@@ -223,6 +242,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   }, [
     activeLocalStream,
     isSharingScreen,
+    showWhiteboard,
     micOn,
     cameraOn,
     raisedHand,
@@ -233,13 +253,86 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   ]);
 
   const renderFeedVideo = (feed: VideoFeed, height: string | number = "100%", avatarSize: number = 80) => {
+    if (feed.type === "whiteboard") {
+      return (
+        <div style={{
+          width: "100%",
+          height: height,
+          background: "#121824",
+          padding: 8,
+          borderRadius: 12,
+          textAlign: "center",
+          border: "1px solid rgba(255,255,255,0.08)",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          overflow: "hidden"
+        }}>
+          <div style={{ marginBottom: 6, display: "flex", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+            <Space wrap size="small">
+              {["#ffffff", "#ff4d4f", "#1890ff", "#52c41a"].map((color) => (
+                <Button
+                  key={color}
+                  shape="circle"
+                  style={{
+                    background: color === "#ffffff" ? "#ffffff" : color,
+                    border: brushColor === color ? "2px solid #52c41a" : "none",
+                    width: 18,
+                    height: 18,
+                    padding: 0,
+                    cursor: "pointer",
+                  }}
+                  onClick={() => setBrushColor(color)}
+                />
+              ))}
+              <Select
+                value={brushSize}
+                onChange={setBrushSize}
+                style={{ width: 68 }}
+                size="small"
+                options={[
+                  { value: 2, label: "2px" },
+                  { value: 4, label: "4px" },
+                  { value: 6, label: "6px" },
+                  { value: 10, label: "10px" },
+                ]}
+              />
+            </Space>
+            <Button danger size="small" onClick={emitClearCanvas} style={{ fontSize: 11, padding: "0 6px" }}>Xóa</Button>
+          </div>
+          <div style={{ background: "#ffffff", border: "1px solid #d9d9d9", borderRadius: 8, display: "inline-block", cursor: "crosshair", maxWidth: "100%", maxHeight: "calc(100% - 30px)" }}>
+            <canvas
+              ref={(node) => {
+                canvasRef.current = node;
+                if (node && whiteboardCanvasRef.current) {
+                  const ctx = node.getContext("2d");
+                  if (ctx) {
+                    ctx.clearRect(0, 0, node.width, node.height);
+                    ctx.drawImage(whiteboardCanvasRef.current, 0, 0);
+                  }
+                }
+              }}
+              width={800}
+              height={500}
+              onMouseDown={handleCanvasMouseDown}
+              onMouseMove={handleCanvasMouseMove}
+              onMouseUp={handleCanvasMouseUpOrLeave}
+              onMouseLeave={handleCanvasMouseUpOrLeave}
+              style={{ display: "block", maxWidth: "100%", maxHeight: "100%", height: "auto", objectFit: "contain" }}
+            />
+          </div>
+        </div>
+      );
+    }
+
     const hasVideo = feed.stream && feed.stream.getVideoTracks().length > 0 && feed.cameraOn;
     if (hasVideo) {
       return (
         <video
           ref={(node) => {
             if (node && node.srcObject !== feed.stream) {
-              node.srcObject = feed.stream;
+              node.srcObject = feed.stream ?? null;
             }
           }}
           autoPlay
@@ -535,6 +628,12 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
         }
       });
 
+      socket.on("meeting:draw-history", (history: any[]) => {
+        history.forEach((payload) => {
+          drawOnCanvas(payload.prevX, payload.prevY, payload.x, payload.y, payload.color, payload.size);
+        });
+      });
+
       socket.on("meeting:webrtc-offer", async ({ fromSocketId, offer }) => {
         createPeerConnection(fromSocketId, false);
         const peer = peersRef.current.get(fromSocketId);
@@ -749,36 +848,58 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   }, [raisedHand, participants, user.fullName, user.id]);
 
   const drawOnCanvas = (prevX: number, prevY: number, x: number, y: number, color: string, size: number) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const offscreen = whiteboardCanvasRef.current;
+    if (offscreen) {
+      const ctx = offscreen.getContext("2d");
+      if (ctx) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = size;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.moveTo(prevX, prevY);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
 
-    ctx.beginPath();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = size;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.moveTo(prevX, prevY);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-    ctx.closePath();
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = size;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.moveTo(prevX, prevY);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
   };
 
   const clearCanvasLocally = () => {
+    const offscreen = whiteboardCanvasRef.current;
+    if (offscreen) {
+      const ctx = offscreen.getContext("2d");
+      ctx?.clearRect(0, 0, offscreen.width, offscreen.height);
+    }
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (canvas) {
+      const ctx = canvas.getContext("2d");
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    }
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const x = ((e.clientX - rect.left) / rect.width) * canvas.width;
+    const y = ((e.clientY - rect.top) / rect.height) * canvas.height;
     isDrawingRef.current = true;
     prevCoordsRef.current = { x, y };
   };
@@ -788,8 +909,8 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const x = ((e.clientX - rect.left) / rect.width) * canvas.width;
+    const y = ((e.clientY - rect.top) / rect.height) * canvas.height;
     const prev = prevCoordsRef.current;
 
     drawOnCanvas(prev.x, prev.y, x, y, brushColor, brushSize);
@@ -1375,55 +1496,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
           )}
 
           <div className="meeting-stage">
-            {showWhiteboard ? (
-              <div style={{ background: "#121824", padding: 16, borderRadius: 12, textAlign: "center", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                  <Space wrap>
-                    <span style={{ fontWeight: "bold", color: "#ffffff" }}>Màu bút: </span>
-                    {["#ffffff", "#ff4d4f", "#1890ff", "#52c41a"].map((color) => (
-                      <Button
-                        key={color}
-                        shape="circle"
-                        style={{
-                          background: color === "#ffffff" ? "#ffffff" : color,
-                          border: brushColor === color ? "2px solid #52c41a" : "none",
-                          width: 24,
-                          height: 24,
-                          padding: 0,
-                          cursor: "pointer",
-                        }}
-                        onClick={() => setBrushColor(color)}
-                      />
-                    ))}
-                    <span style={{ fontWeight: "bold", marginLeft: 16, color: "#ffffff" }}>Cỡ bút: </span>
-                    <Select
-                      value={brushSize}
-                      onChange={setBrushSize}
-                      style={{ width: 80 }}
-                      options={[
-                        { value: 2, label: "2px" },
-                        { value: 4, label: "4px" },
-                        { value: 6, label: "6px" },
-                        { value: 10, label: "10px" },
-                      ]}
-                    />
-                  </Space>
-                  <Button danger onClick={emitClearCanvas}>Xóa bảng</Button>
-                </div>
-                <div style={{ background: "#ffffff", border: "1px solid #d9d9d9", borderRadius: 8, display: "inline-block", cursor: "crosshair" }}>
-                  <canvas
-                    ref={canvasRef}
-                    width={800}
-                    height={500}
-                    onMouseDown={handleCanvasMouseDown}
-                    onMouseMove={handleCanvasMouseMove}
-                    onMouseUp={handleCanvasMouseUpOrLeave}
-                    onMouseLeave={handleCanvasMouseUpOrLeave}
-                    style={{ display: "block", maxWidth: "100%", height: "auto" }}
-                  />
-                </div>
-              </div>
-            ) : layoutMode === "grid" ? (
+            {layoutMode === "grid" ? (
               <div className="video-grid">
                 {videoFeeds.map((feed) => {
                   return (
@@ -1534,10 +1607,11 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
               </Button>
               <Button
                 type={showWhiteboard ? "primary" : "default"}
+                danger={showWhiteboard}
                 icon={<span>📋</span>}
                 onClick={() => setShowWhiteboard(!showWhiteboard)}
               >
-                {showWhiteboard ? "Hiện Video" : "Bảng vẽ chung"}
+                {showWhiteboard ? "Tắt bảng vẽ" : "Bảng vẽ chung"}
               </Button>
               <Button
                 danger={isRecording}
