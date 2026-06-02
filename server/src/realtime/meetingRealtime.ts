@@ -11,6 +11,8 @@ interface ParticipantState {
   cameraOn: boolean;
   raisedHand?: boolean;
   raisedHandTime?: string;
+  sharingScreen?: boolean;
+  screenStreamId?: string;
 }
 
 interface MeetingRoomState {
@@ -55,6 +57,8 @@ interface ParticipantStatePayload {
   micOn: boolean;
   cameraOn: boolean;
   raisedHand?: boolean;
+  sharingScreen?: boolean;
+  screenStreamId?: string;
 }
 
 interface ChatPayload {
@@ -347,7 +351,7 @@ export const registerMeetingRealtime = (io: Server): void => {
     });
 
     socket.on("meeting:participant-state", (payload: ParticipantStatePayload) => {
-      const { meetingId, micOn, cameraOn, raisedHand } = payload;
+      const { meetingId, micOn, cameraOn, raisedHand, sharingScreen, screenStreamId } = payload;
       const state = rooms.get(meetingId);
       if (!state) {
         return;
@@ -365,6 +369,12 @@ export const registerMeetingRealtime = (io: Server): void => {
           participant.raisedHandTime = new Date().toISOString();
         }
         participant.raisedHand = raisedHand;
+      }
+      if (typeof sharingScreen === "boolean") {
+        participant.sharingScreen = sharingScreen;
+      }
+      if (screenStreamId !== undefined) {
+        participant.screenStreamId = screenStreamId;
       }
       io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
     });

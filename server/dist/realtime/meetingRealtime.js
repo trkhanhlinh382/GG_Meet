@@ -221,7 +221,7 @@ const registerMeetingRealtime = (io) => {
             });
         });
         socket.on("meeting:participant-state", (payload) => {
-            const { meetingId, micOn, cameraOn, raisedHand } = payload;
+            const { meetingId, micOn, cameraOn, raisedHand, sharingScreen, screenStreamId } = payload;
             const state = rooms.get(meetingId);
             if (!state) {
                 return;
@@ -237,6 +237,12 @@ const registerMeetingRealtime = (io) => {
                     participant.raisedHandTime = new Date().toISOString();
                 }
                 participant.raisedHand = raisedHand;
+            }
+            if (typeof sharingScreen === "boolean") {
+                participant.sharingScreen = sharingScreen;
+            }
+            if (screenStreamId !== undefined) {
+                participant.screenStreamId = screenStreamId;
             }
             io.to(meetingId).emit("meeting:participants-updated", Array.from(state.participants.values()));
         });

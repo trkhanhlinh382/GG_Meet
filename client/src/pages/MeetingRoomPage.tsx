@@ -8,7 +8,7 @@ import {
 } from "@ant-design/icons";
 import { Alert, Button, Card, Col, Input, List, Row, Select, Space, Switch, Tag, Typography, message, Tabs, Popover, Avatar } from "antd";
 import { RightOutlined, LeftOutlined } from "@ant-design/icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, type Socket } from "socket.io-client";
 import { http } from "../api/http";
@@ -39,6 +39,17 @@ interface ChatMessage {
   fileType?: string;
   sticker?: string;
   createdAt: string;
+}
+
+interface VideoFeed {
+  id: string;
+  type: "local" | "local-screen" | "remote" | "remote-screen";
+  socketId: string;
+  stream: MediaStream;
+  name: string;
+  micOn?: boolean;
+  cameraOn?: boolean;
+  raisedHand?: boolean;
 }
 
 const rtcConfig: RTCConfiguration = {
@@ -84,6 +95,10 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const recordingStreamRef = useRef<MediaStream | null>(null);
+  const [isSharingScreen, setIsSharingScreen] = useState(false);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const [remoteScreenStreams, setRemoteScreenStreams] = useState<Record<string, MediaStream>>({});
+  const allRemoteStreamsRef = useRef<Map<string, Set<MediaStream>>>(new Map());
 
   const isHostLike = isHost || isCoHost;
 
@@ -92,58 +107,149 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
     [messages],
   );
 
-  const renderLocalVideo = (height: string | number = "100%", avatarSize: number = 80) => {
-    const hasVideo = activeLocalStream && activeLocalStream.getVideoTracks().length > 0 && cameraOn;
+  const updateRemoteStreamsFromCache = useCallback(() => {
+    const nextRemoteStreams: Record<string, MediaStream> = {};
+    const nextRemoteScreenStreams: Record<string, MediaStream> = {};
+
+    for (const [socketId, streams] of allRemoteStreamsRef.current.entries()) {
+      const participant = participants.find((p) => p.socketId === socketId);
+      const screenStreamId = participant?.screenStreamId;
+
+      if (streams.size === 1) {
+        const stream = Array.from(streams)[0];
+        if (screenStreamId && stream.id === screenStreamId) {
+          nextRemoteScreenStreams[socketId] = stream;
+        } else {
+          nextRemoteStreams[socketId] = stream;
+        }
+      } else if (streams.size > 1) {
+        let foundScreen = false;
+        streams.forEach((stream) => {
+          if (screenStreamId && stream.id === screenStreamId) {
+            nextRemoteScreenStreams[socketId] = stream;
+            foundScreen = true;
+          }
+        });
+
+        streams.forEach((stream) => {
+          if (screenStreamId && stream.id === screenStreamId) {
+            return;
+          }
+          if (!foundScreen && !nextRemoteStreams[socketId]) {
+            nextRemoteStreams[socketId] = stream;
+          } else if (!foundScreen) {
+            nextRemoteScreenStreams[socketId] = stream;
+          } else {
+            nextRemoteStreams[socketId] = stream;
+          }
+        });
+      }
+    }
+
+    setRemoteStreams(nextRemoteStreams);
+    setRemoteScreenStreams(nextRemoteScreenStreams);
+  }, [participants]);
+
+  useEffect(() => {
+    const validSocketIds = new Set(participants.map((item) => item.socketId));
+
+    for (const socketId of allRemoteStreamsRef.current.keys()) {
+      if (!validSocketIds.has(socketId)) {
+        allRemoteStreamsRef.current.delete(socketId);
+      }
+    }
+
+    updateRemoteStreamsFromCache();
+  }, [participants, updateRemoteStreamsFromCache]);
+
+  const videoFeeds = useMemo(() => {
+    const feeds: VideoFeed[] = [];
+
+    if (activeLocalStream) {
+      feeds.push({
+        id: "local",
+        type: "local",
+        socketId: socketRef.current?.id || "local",
+        stream: activeLocalStream,
+        name: `You (${user.fullName})`,
+        micOn,
+        cameraOn,
+        raisedHand,
+      });
+    }
+
+    if (isSharingScreen && screenStreamRef.current) {
+      feeds.push({
+        id: "local-screen",
+        type: "local-screen",
+        socketId: socketRef.current?.id || "local",
+        stream: screenStreamRef.current,
+        name: `You (${user.fullName}) - Trình chiếu`,
+        micOn: false,
+        cameraOn: true,
+      });
+    }
+
+    participants.forEach((p) => {
+      const camStream = remoteStreams[p.socketId];
+      if (camStream) {
+        feeds.push({
+          id: p.socketId,
+          type: "remote",
+          socketId: p.socketId,
+          stream: camStream,
+          name: p.name,
+          micOn: p.micOn,
+          cameraOn: p.cameraOn,
+          raisedHand: p.raisedHand,
+        });
+      }
+
+      const screenStream = remoteScreenStreams[p.socketId];
+      if (screenStream) {
+        feeds.push({
+          id: `${p.socketId}-screen`,
+          type: "remote-screen",
+          socketId: p.socketId,
+          stream: screenStream,
+          name: `${p.name} - Trình chiếu`,
+          micOn: false,
+          cameraOn: true,
+        });
+      }
+    });
+
+    return feeds;
+  }, [
+    activeLocalStream,
+    isSharingScreen,
+    micOn,
+    cameraOn,
+    raisedHand,
+    participants,
+    remoteStreams,
+    remoteScreenStreams,
+    user.fullName,
+  ]);
+
+  const renderFeedVideo = (feed: VideoFeed, height: string | number = "100%", avatarSize: number = 80) => {
+    const hasVideo = feed.stream && feed.stream.getVideoTracks().length > 0 && feed.cameraOn;
     if (hasVideo) {
       return (
         <video
           ref={(node) => {
-            if (node && node.srcObject !== activeLocalStream) {
-              node.srcObject = activeLocalStream;
+            if (node && node.srcObject !== feed.stream) {
+              node.srcObject = feed.stream;
             }
           }}
           autoPlay
-          muted
+          muted={feed.type === "local" || feed.type === "local-screen" || feed.type === "remote-screen"}
           playsInline
-          style={{ width: "100%", height: "100%", objectFit: layoutMode === "grid" ? "cover" : "contain", display: "block" }}
-        />
-      );
-    }
-
-    return (
-      <div style={{
-        width: "100%",
-        height: height,
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        background: "radial-gradient(circle at center, #1e293b, #0f172a)",
-        borderRadius: 12,
-        border: "1px solid rgba(255,255,255,0.08)"
-      }}>
-        <Avatar size={avatarSize} style={{ backgroundColor: '#6366f1', fontSize: avatarSize / 2.5, fontWeight: "bold" }}>
-          {user.fullName.charAt(0).toUpperCase()}
-        </Avatar>
-      </div>
-    );
-  };
-
-  const renderRemoteVideo = (socketId: string, stream: MediaStream | null, height: string | number = "100%", avatarSize: number = 80) => {
-    const name = participantNameBySocket.get(socketId) ?? "Participant";
-    const pState = participants.find((item) => item.socketId === socketId);
-    const pCameraOn = pState ? pState.cameraOn : true;
-    const hasVideo = stream && stream.getVideoTracks().length > 0 && pCameraOn;
-
-    if (hasVideo && stream) {
-      return (
-        <video
-          autoPlay
-          playsInline
-          style={{ width: "100%", height: "100%", objectFit: layoutMode === "grid" ? "cover" : "contain", display: "block" }}
-          ref={(node) => {
-            if (node && node.srcObject !== stream) {
-              node.srcObject = stream;
-            }
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: feed.type.includes("screen") ? "contain" : (layoutMode === "grid" ? "cover" : "contain"),
+            display: "block"
           }}
         />
       );
@@ -161,7 +267,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
         border: "1px solid rgba(255,255,255,0.08)"
       }}>
         <Avatar size={avatarSize} style={{ backgroundColor: '#6366f1', fontSize: avatarSize / 2.5, fontWeight: "bold" }}>
-          {name.charAt(0).toUpperCase()}
+          {feed.name.charAt(0).toUpperCase()}
         </Avatar>
       </div>
     );
@@ -185,20 +291,21 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
       });
     }
 
+    if (isSharingScreen && screenStreamRef.current) {
+      const screenTrack = screenStreamRef.current.getVideoTracks()[0];
+      if (screenTrack) {
+        peer.addTrack(screenTrack, screenStreamRef.current);
+      }
+    }
+
     peer.ontrack = (event) => {
       const remoteStream = event.streams[0];
       if (remoteStream) {
-        setRemoteStreams((prev) => ({
-          ...prev,
-          [remoteSocketId]: remoteStream,
-        }));
-      } else {
-        setRemoteStreams((prev) => {
-          const currentTracks = prev[remoteSocketId] ? prev[remoteSocketId].getTracks() : [];
-          const filteredTracks = currentTracks.filter((t) => t.kind !== event.track.kind);
-          const nextStream = new MediaStream([...filteredTracks, event.track]);
-          return { ...prev, [remoteSocketId]: nextStream };
-        });
+        if (!allRemoteStreamsRef.current.has(remoteSocketId)) {
+          allRemoteStreamsRef.current.set(remoteSocketId, new Set());
+        }
+        allRemoteStreamsRef.current.get(remoteSocketId)!.add(remoteStream);
+        updateRemoteStreamsFromCache();
       }
     };
 
@@ -264,21 +371,6 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
         peer.addTrack(track, localStream);
       }
     }
-  };
-
-  const switchOutgoingVideoTrack = async (remoteSocketId: string, nextTrack: MediaStreamTrack, sourceStream: MediaStream) => {
-    const peer = peersRef.current.get(remoteSocketId);
-    if (!peer) {
-      return;
-    }
-
-    const sender = peer.getSenders().find((item) => item.track?.kind === "video");
-    if (sender) {
-      await sender.replaceTrack(nextTrack);
-      return;
-    }
-
-    peer.addTrack(nextTrack, sourceStream);
   };
 
   useEffect(() => {
@@ -509,6 +601,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
       }
       socketRef.current = null;
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current?.getTracks().forEach((track) => track.stop());
       peersRef.current.forEach((peer) => peer.close());
       peersRef.current.clear();
     };
@@ -554,10 +647,6 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
       }
       return next;
     });
-  }, [participants]);
-
-  const participantNameBySocket = useMemo(() => {
-    return new Map(participants.map((item) => [item.socketId, item.name]));
   }, [participants]);
 
   const handleFullscreen = (e: React.MouseEvent<HTMLElement>) => {
@@ -794,6 +883,35 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
     }
   };
 
+  const stopScreenShareFlow = () => {
+    setIsSharingScreen(false);
+
+    const screenTrack = screenStreamRef.current?.getVideoTracks()[0];
+    if (screenTrack) {
+      for (const [remoteSocketId, peer] of peersRef.current.entries()) {
+        const sender = peer.getSenders().find((s) => s.track === screenTrack);
+        if (sender) {
+          peer.removeTrack(sender);
+        }
+        void renegotiatePeer(remoteSocketId);
+      }
+    }
+
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current = null;
+    }
+
+    socketRef.current?.emit("meeting:participant-state", {
+      meetingId,
+      micOn,
+      cameraOn,
+      raisedHand,
+      sharingScreen: false,
+      screenStreamId: null,
+    });
+  };
+
   const shareScreen = async () => {
     try {
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true });
@@ -804,29 +922,25 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
         return;
       }
 
-      setActiveLocalStream(display);
+      screenStreamRef.current = display;
+      setIsSharingScreen(true);
 
-      for (const [remoteSocketId] of peersRef.current.entries()) {
-        await switchOutgoingVideoTrack(remoteSocketId, screenTrack, display);
-
+      for (const [remoteSocketId, peer] of peersRef.current.entries()) {
+        peer.addTrack(screenTrack, display);
         await renegotiatePeer(remoteSocketId);
       }
 
+      socketRef.current?.emit("meeting:participant-state", {
+        meetingId,
+        micOn,
+        cameraOn,
+        raisedHand,
+        sharingScreen: true,
+        screenStreamId: display.id,
+      });
+
       screenTrack.onended = () => {
-        const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
-        if (!cameraTrack) {
-          return;
-        }
-
-        if (localStreamRef.current) {
-          setActiveLocalStream(localStreamRef.current);
-        }
-
-        for (const [remoteSocketId] of peersRef.current.entries()) {
-          void switchOutgoingVideoTrack(remoteSocketId, cameraTrack, localStreamRef.current as MediaStream);
-
-          void renegotiatePeer(remoteSocketId);
-        }
+        stopScreenShareFlow();
       };
     } catch {
       message.warning("Không thể chia sẻ màn hình");
@@ -1153,9 +1267,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   }
 
   if (isMinimized) {
-    const firstRemoteSocketId = Object.keys(remoteStreams)[0];
-    const firstRemoteStream = firstRemoteSocketId ? remoteStreams[firstRemoteSocketId] : null;
-    const activeName = firstRemoteSocketId ? (participantNameBySocket.get(firstRemoteSocketId) ?? "Participant") : `You (${user.fullName})`;
+    const firstFeed = videoFeeds.find((f) => f.type.startsWith("remote")) || videoFeeds[0];
 
     return (
       <div style={{
@@ -1169,22 +1281,13 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
         padding: 8
       }}>
         <div style={{ position: "relative", flex: 1, borderRadius: 10, overflow: "hidden", background: "#121824", border: "1px solid rgba(255,255,255,0.06)" }}>
-          {firstRemoteStream ? (
-            <video
-              autoPlay
-              playsInline
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              ref={(node) => {
-                if (node && node.srcObject !== firstRemoteStream) {
-                  node.srcObject = firstRemoteStream;
-                }
-              }}
-            />
+          {firstFeed ? (
+            renderFeedVideo(firstFeed, "100%", 48)
           ) : (
-            renderLocalVideo("100%", 48)
+            <div style={{ width: "100%", height: "100%", background: "#121824" }} />
           )}
           <div style={{ position: "absolute", bottom: 8, left: 8, padding: "2px 8px", background: "rgba(0,0,0,0.5)", borderRadius: 6, color: "#fff", fontSize: 11 }}>
-            {activeName}
+            {firstFeed?.name ?? "Participant"}
           </div>
         </div>
 
@@ -1322,43 +1425,13 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
               </div>
             ) : layoutMode === "grid" ? (
               <div className="video-grid">
-                <div className="video-card">
-                  {renderLocalVideo("200px", 64)}
-                  <div className="video-overlay-name">
-                    <span>You ({user.fullName})</span>
-                  </div>
-                  <div style={{ position: "absolute", top: 12, right: 12, zIndex: 10 }}>
-                    <Button
-                      type="text"
-                      shape="circle"
-                      icon={<span>⛶</span>}
-                      onClick={handleFullscreen}
-                      style={{ color: "#fff", background: "rgba(0,0,0,0.5)", border: "none" }}
-                    />
-                  </div>
-                  <div className="video-overlay-status">
-                    <div className="video-status-badge" style={{ borderColor: micOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
-                      {micOn ? <span>🎙️</span> : <span style={{ color: "#ff4d4f" }}>🔇</span>}
-                    </div>
-                    <div className="video-status-badge" style={{ borderColor: cameraOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
-                      {cameraOn ? <span>📷</span> : <span style={{ color: "#ff4d4f" }}>❌</span>}
-                    </div>
-                  </div>
-                </div>
-
-                {Object.entries(remoteStreams).map(([socketId, stream]) => {
-                  const name = participantNameBySocket.get(socketId) ?? "Participant";
-                  const pState = participants.find((item) => item.socketId === socketId);
-                  const pMicOn = pState ? pState.micOn : true;
-                  const pCameraOn = pState ? pState.cameraOn : true;
-                  const pRaisedHand = pState ? pState.raisedHand : false;
-
+                {videoFeeds.map((feed) => {
                   return (
-                    <div className="video-card" key={socketId}>
-                      {renderRemoteVideo(socketId, stream, "200px", 64)}
+                    <div className="video-card" key={feed.id}>
+                      {renderFeedVideo(feed, "200px", 64)}
                       <div className="video-overlay-name">
-                        <span>{name}</span>
-                        {pRaisedHand && <span style={{ color: "#ffe58f" }}>✋</span>}
+                        <span>{feed.name}</span>
+                        {feed.raisedHand && <span style={{ color: "#ffe58f" }}>✋</span>}
                       </div>
                       <div style={{ position: "absolute", top: 12, right: 12, zIndex: 10 }}>
                         <Button
@@ -1369,14 +1442,16 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
                           style={{ color: "#fff", background: "rgba(0,0,0,0.5)", border: "none" }}
                         />
                       </div>
-                      <div className="video-overlay-status">
-                        <div className="video-status-badge" style={{ borderColor: pMicOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
-                          {pMicOn ? <span>🎙️</span> : <span style={{ color: "#ff4d4f" }}>🔇</span>}
+                      {!feed.type.includes("screen") && (
+                        <div className="video-overlay-status">
+                          <div className="video-status-badge" style={{ borderColor: feed.micOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
+                            {feed.micOn ? <span>🎙️</span> : <span style={{ color: "#ff4d4f" }}>🔇</span>}
+                          </div>
+                          <div className="video-status-badge" style={{ borderColor: feed.cameraOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
+                            {feed.cameraOn ? <span>📷</span> : <span style={{ color: "#ff4d4f" }}>❌</span>}
+                          </div>
                         </div>
-                        <div className="video-status-badge" style={{ borderColor: pCameraOn ? "rgba(255,255,255,0.2)" : "#ff4d4f" }}>
-                          {pCameraOn ? <span>📷</span> : <span style={{ color: "#ff4d4f" }}>❌</span>}
-                        </div>
-                      </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1384,19 +1459,16 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
             ) : (
               <div style={{ width: "100%" }}>
                 {(() => {
-                  const activeFocusId = focusSocketId || (Object.keys(remoteStreams)[0] ? Object.keys(remoteStreams)[0] : "local");
-                  const focusRemoteStream = activeFocusId !== "local" ? remoteStreams[activeFocusId] : null;
-                  const focusName = activeFocusId === "local" ? `You (${user.fullName})` : (participantNameBySocket.get(activeFocusId) ?? "Participant");
+                  const activeFocusId = focusSocketId || (videoFeeds[0] ? videoFeeds[0].id : "local");
+                  const focusFeed = videoFeeds.find((f) => f.id === activeFocusId) || videoFeeds[0];
+
+                  if (!focusFeed) return null;
 
                   return (
                     <div className="video-card" style={{ width: "100%", height: 420, position: "relative", borderRadius: 12, overflow: "hidden", background: "#121824", border: "1px solid rgba(255,255,255,0.08)", marginBottom: 12 }}>
-                      {activeFocusId === "local" ? (
-                        renderLocalVideo("420px", 96)
-                      ) : (
-                        renderRemoteVideo(activeFocusId, focusRemoteStream, "420px", 96)
-                      )}
+                      {renderFeedVideo(focusFeed, "420px", 96)}
                       <div className="video-overlay-name">
-                        <span>{focusName}</span>
+                        <span>{focusFeed.name}</span>
                       </div>
                       <div style={{ position: "absolute", top: 12, right: 12, zIndex: 10 }}>
                         <Button
@@ -1412,32 +1484,19 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
                 })()}
 
                 <div style={{ display: "flex", gap: 12, overflowX: "auto", padding: "8px 4px", background: "rgba(255,255,255,0.02)", borderRadius: 10, border: "1px solid rgba(255,255,255,0.04)" }}>
-                  {focusSocketId !== "local" && (
-                    <div
-                      className="video-card"
-                      style={{ width: 140, height: 100, flexShrink: 0, position: "relative", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)" }}
-                      onClick={() => setFocusSocketId("local")}
-                    >
-                      {renderLocalVideo("100px", 40)}
-                      <div style={{ position: "absolute", bottom: 4, left: 4, background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "1px 4px", fontSize: 10, color: "#fff" }}>
-                        You
-                      </div>
-                    </div>
-                  )}
-
-                  {Object.entries(remoteStreams).map(([socketId, stream]) => {
-                    if (focusSocketId === socketId || (focusSocketId === null && socketId === Object.keys(remoteStreams)[0])) return null;
-                    const name = participantNameBySocket.get(socketId) ?? "Participant";
+                  {videoFeeds.map((feed) => {
+                    const activeFocusId = focusSocketId || (videoFeeds[0] ? videoFeeds[0].id : "local");
+                    if (feed.id === activeFocusId) return null;
                     return (
                       <div
                         className="video-card"
-                        key={socketId}
+                        key={feed.id}
                         style={{ width: 140, height: 100, flexShrink: 0, position: "relative", borderRadius: 8, overflow: "hidden", cursor: "pointer", border: "1px solid rgba(255,255,255,0.12)" }}
-                        onClick={() => setFocusSocketId(socketId)}
+                        onClick={() => setFocusSocketId(feed.id)}
                       >
-                        {renderRemoteVideo(socketId, stream, "100px", 40)}
+                        {renderFeedVideo(feed, "100px", 40)}
                         <div style={{ position: "absolute", bottom: 4, left: 4, background: "rgba(0,0,0,0.5)", borderRadius: 4, padding: "1px 4px", fontSize: 10, color: "#fff" }}>
-                          {name}
+                          {feed.name}
                         </div>
                       </div>
                     );
@@ -1458,8 +1517,13 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
               )}
               <Switch checked={micOn} checkedChildren={<AudioOutlined />} unCheckedChildren={<AudioMutedOutlined />} onChange={toggleMic} />
               <Switch checked={cameraOn} checkedChildren={<VideoCameraOutlined />} unCheckedChildren={<VideoCameraAddOutlined />} onChange={toggleCamera} />
-              <Button icon={<VideoCameraAddOutlined />} onClick={() => void shareScreen()}>
-                Share Screen
+              <Button
+                type={isSharingScreen ? "primary" : "default"}
+                danger={isSharingScreen}
+                icon={isSharingScreen ? <VideoCameraOutlined /> : <VideoCameraAddOutlined />}
+                onClick={isSharingScreen ? stopScreenShareFlow : () => void shareScreen()}
+              >
+                {isSharingScreen ? "Dừng chia sẻ" : "Chia sẻ màn hình"}
               </Button>
               <Button
                 type={raisedHand ? "primary" : "default"}

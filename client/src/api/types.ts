@@ -67,6 +67,8 @@ export interface ParticipantState {
   cameraOn: boolean;
   raisedHand?: boolean;
   raisedHandTime?: string;
+  sharingScreen?: boolean;
+  screenStreamId?: string;
 }
 
 export interface MeetingMessage {
