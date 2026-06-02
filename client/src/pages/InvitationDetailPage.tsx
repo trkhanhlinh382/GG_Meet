@@ -74,7 +74,8 @@ export function InvitationDetailPage({ onJoinMeeting }: InvitationDetailPageProp
     if (!id) return;
     setActing(true);
     try {
-      const res = await http.patch<InvitationWithMeeting>(`/invitations/${id}`, { status });
+      const endpoint = status === "accepted" ? `/invitations/${id}/accept` : `/invitations/${id}/reject`;
+      const res = await http.post<InvitationWithMeeting>(endpoint);
       setInvitation(res.data);
       const labels: Record<string, string> = {
         accepted: "Đã chấp nhận lời mời",
