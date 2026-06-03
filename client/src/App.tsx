@@ -1,6 +1,7 @@
 import {
   BellOutlined,
   CalendarOutlined,
+  ClockCircleOutlined,
   LogoutOutlined,
   ScheduleOutlined,
   ThunderboltOutlined,
@@ -16,7 +17,6 @@ import {
   Menu,
   Popover,
   Spin,
-  Typography,
   message,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -426,14 +426,14 @@ function App() {
               onOpenChange={setNotifOpen}
               placement="bottomRight"
               trigger="click"
+              overlayClassName="notif-popover"
               title={
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>Thông báo</span>
+                <div className="notif-title-row">
+                  <span className="notif-title-text">Thông báo</span>
                   {unreadCount > 0 && (
                     <Button
                       type="link"
-                      size="small"
-                      style={{ fontSize: 12, padding: 0, color: "var(--accent)" }}
+                      className="notif-mark-all-btn"
                       onClick={async () => {
                         await Promise.all(
                           notifications.filter((n) => !n.isRead).map((n) => markNotificationAsRead(n._id))
@@ -448,12 +448,13 @@ function App() {
               }
               content={
                 <List
+                  className="notif-list-container"
                   dataSource={notifications}
                   locale={{ emptyText: "Không có thông báo" }}
-                  style={{ minWidth: 340, maxHeight: 420, overflowY: "auto" }}
+                  style={{ minWidth: 360, maxHeight: 420, overflowY: "auto" }}
                   renderItem={(item: Notification) => (
                     <List.Item
-                      style={{ padding: "10px 0", borderBottom: "1px solid var(--border)", cursor: "pointer", gap: 0 }}
+                      className={`notif-item ${!item.isRead ? "unread" : ""}`}
                       onClick={async () => {
                         if (!item.isRead) {
                           await markNotificationAsRead(item._id);
@@ -466,8 +467,7 @@ function App() {
                               <Button
                                 key="mark-read"
                                 size="small"
-                                type="link"
-                                style={{ padding: 0, fontSize: 11, color: "var(--accent)" }}
+                                className="notif-read-btn"
                                 onClick={async (e) => {
                                   e.stopPropagation();
                                   await markNotificationAsRead(item._id);
@@ -481,28 +481,21 @@ function App() {
                       }
                     >
                       <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           {!item.isRead && (
-                            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", display: "inline-block", flexShrink: 0 }} />
+                            <span className="notif-dot" />
                           )}
-                          <Typography.Text strong={!item.isRead} style={{ fontSize: 13, color: "var(--text-primary)" }}>
+                          <span className="notif-item-title" style={{ fontWeight: !item.isRead ? 600 : 500 }}>
                             {item.title}
-                          </Typography.Text>
+                          </span>
                         </div>
-                        <Typography.Paragraph
-                          style={{
-                            fontSize: 12,
-                            color: "var(--text-secondary)",
-                            margin: "4px 0 0 0",
-                            paddingLeft: item.isRead ? 0 : 13,
-                            lineHeight: "1.4"
-                          }}
-                        >
+                        <p className="notif-item-content">
                           {item.content}
-                        </Typography.Paragraph>
+                        </p>
                         {item.createdAt && (
-                          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, paddingLeft: item.isRead ? 0 : 13 }}>
-                            {dayjs(item.createdAt).fromNow()}
+                          <div className="notif-item-time">
+                            <ClockCircleOutlined style={{ fontSize: 10 }} />
+                            <span>{dayjs(item.createdAt).fromNow()}</span>
                           </div>
                         )}
                       </div>
