@@ -74,6 +74,7 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   const [raisedHand, setRaisedHand] = useState(false);
   const [joined, setJoined] = useState(false);
   const [waitingRoom, setWaitingRoom] = useState(false);
+  const [meetingData, setMeetingData] = useState<any>(null);
   const [isHost, setIsHost] = useState(false);
   const [isCoHost, setIsCoHost] = useState(false);
   const [participants, setParticipants] = useState<ParticipantState[]>([]);
@@ -492,6 +493,18 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
           }));
           setMessages(loadedMessages);
         }
+      })
+      .catch(() => undefined);
+
+    http
+      .get(`/meetings/${meetingId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+      .then((response) => {
+        if (!isMounted) return;
+        setMeetingData(response.data);
       })
       .catch(() => undefined);
 
@@ -1373,7 +1386,206 @@ export const MeetingRoomPage = ({ token, user, roomId, isMinimized = false, onMi
   ]);
 
   if (waitingRoom) {
-    return <Alert type="info" showIcon message="Bạn đang ở waiting room" description="Chờ host phê duyệt để vào phòng họp." />;
+    const getCategoryLabel = (cat: string) => {
+      const map: Record<string, string> = {
+        personal: "Cá nhân",
+        interview: "Phỏng vấn",
+        team_meeting: "Họp nhóm",
+        client_meeting: "Khách hàng",
+        training: "Đào tạo",
+      };
+      return map[cat] || "Cuộc họp trực tuyến";
+    };
+    const categoryLabel = meetingData ? getCategoryLabel(meetingData.category) : "Cuộc họp trực tuyến";
+
+    return (
+      <>
+        <style dangerouslySetInnerHTML={{ __html: `
+          @keyframes radar-pulse {
+            0% { transform: scale(0.6); opacity: 0.6; }
+            100% { transform: scale(1.8); opacity: 0; }
+          }
+          .waiting-room-bg {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            width: 100%;
+            background: radial-gradient(circle at center, #111422 0%, #07090e 100%);
+            padding: 24px;
+            overflow: hidden;
+            position: relative;
+          }
+          .waiting-room-card {
+            max-width: 480px;
+            width: 100%;
+            background: rgba(26, 29, 39, 0.45);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+            padding: 48px 32px 32px 32px;
+            text-align: center;
+            box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            animation: fadeIn 0.4s ease-out;
+          }
+          .waiting-room-radar {
+            position: relative;
+            width: 120px;
+            height: 120px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+          .radar-circle {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: var(--accent);
+            opacity: 0.15;
+            animation: radar-pulse 2.2s infinite ease-out;
+          }
+          .radar-circle:nth-child(2) {
+            animation-delay: 0.7s;
+          }
+          .radar-circle:nth-child(3) {
+            animation-delay: 1.4s;
+          }
+          .radar-icon-wrapper {
+            position: relative;
+            width: 76px;
+            height: 76px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent) 0%, #4f46e5 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 32px;
+            box-shadow: 0 8px 32px rgba(99, 102, 241, 0.35);
+            z-index: 2;
+          }
+          .waiting-room-title {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #ffffff;
+            letter-spacing: -0.5px;
+          }
+          .waiting-room-subtitle {
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 28px;
+            max-width: 360px;
+          }
+          .meeting-info-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px;
+            width: 100%;
+            margin-bottom: 32px;
+            text-align: left;
+          }
+          .meeting-info-row {
+            display: flex;
+            margin-bottom: 10px;
+          }
+          .meeting-info-row:last-child {
+            margin-bottom: 0;
+          }
+          .meeting-info-label {
+            color: var(--text-secondary);
+            width: 110px;
+            font-size: 13px;
+          }
+          .meeting-info-value {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 14px;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .leave-button {
+            background: rgba(255, 255, 255, 0.03) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            color: var(--text-secondary) !important;
+            height: 42px !important;
+            border-radius: 12px !important;
+            padding: 0 28px !important;
+            font-weight: 500 !important;
+            font-size: 14px !important;
+            transition: all 0.25s ease !important;
+          }
+          .leave-button:hover {
+            background: rgba(239, 68, 68, 0.08) !important;
+            border-color: rgba(239, 68, 68, 0.3) !important;
+            color: #ef4444 !important;
+          }
+          @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+        ` }} />
+        <div className="waiting-room-bg">
+          <div className="waiting-room-card">
+            <div className="waiting-room-radar">
+              <div className="radar-circle" />
+              <div className="radar-circle" />
+              <div className="radar-circle" />
+              <div className="radar-icon-wrapper">
+                <VideoCameraOutlined />
+              </div>
+            </div>
+            
+            <h2 className="waiting-room-title">Phòng Chờ Cuộc Họp</h2>
+            <p className="waiting-room-subtitle">
+              Vui lòng đợi một lát. Người tổ chức cuộc họp đang duyệt yêu cầu tham gia của bạn.
+            </p>
+            
+            <div className="meeting-info-box">
+              <div className="meeting-info-row">
+                <span className="meeting-info-label">Cuộc họp:</span>
+                <span className="meeting-info-value" title={meetingData?.title || meetingId}>
+                  {meetingData?.title || meetingId}
+                </span>
+              </div>
+              <div className="meeting-info-row">
+                <span className="meeting-info-label">Chủ đề:</span>
+                <span className="meeting-info-value">{categoryLabel}</span>
+              </div>
+              <div className="meeting-info-row">
+                <span className="meeting-info-label">Trạng thái:</span>
+                <span className="meeting-info-value" style={{ color: "var(--accent)" }}>
+                  Đang chờ duyệt...
+                </span>
+              </div>
+            </div>
+            
+            <Button
+              className="leave-button"
+              onClick={() => {
+                if (onLeave) {
+                  onLeave();
+                } else {
+                  navigate("/dashboard");
+                }
+              }}
+            >
+              Rời phòng chờ
+            </Button>
+          </div>
+        </div>
+      </>
+    );
   }
 
   if (startsAt && countdownMs > 0) {
