@@ -361,7 +361,7 @@ function App() {
                   label: "Cuộc họp",
                   style: { borderRadius: 8, marginBottom: 2 },
                 },
-                ...(user?.role === "admin" || user?.role === "super_admin"
+                ...(user?.role === "admin"
                   ? [
                       {
                         key: "admin",
@@ -411,11 +411,9 @@ function App() {
             {user && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginTop: 4 }}>
                 <Tag color={
-                  user.role === "admin" || user.role === "super_admin"
+                  user.role === "admin"
                     ? "red"
-                    : user.role === "host"
-                    ? "blue"
-                    : "default"
+                    : "blue"
                 } style={{ margin: 0, textTransform: "capitalize" }}>
                   {user.role}
                 </Tag>
@@ -602,7 +600,7 @@ function App() {
               <Route path="/meetings/:id" element={user ? <MeetingDetailPage token={token} user={user} /> : <Navigate to="/login" replace />} />
               <Route path="/invitations/:id" element={user ? <InvitationDetailPage onJoinMeeting={joinByLink} /> : <Navigate to="/login" replace />} />
               <Route path="/room/:id" element={user ? <RoomPlaceholderRoute setActiveCallRoomId={setActiveCallRoomId} setIsCallMinimized={setIsCallMinimized} /> : <Navigate to="/login" replace />} />
-              <Route path="/admin/*" element={user && (user.role === "admin" || user.role === "super_admin") ? <AdminLayout /> : <Navigate to="/dashboard" replace />} />
+              <Route path="/admin/*" element={user && user.role === "admin" ? <AdminLayout /> : <Navigate to="/dashboard" replace />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
 

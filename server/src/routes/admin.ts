@@ -6,7 +6,7 @@ import { InvitationModel } from "../models/invitation.model";
 
 export const adminRouter = Router();
 
-// Middleware to verify the user has admin or super_admin role
+// Middleware to verify the user has admin role
 const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction): void => {
   if (!req.user) {
     res.status(401).json({ message: "Unauthorized" });
@@ -14,10 +14,11 @@ const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction): void
   }
 
   const role = req.user.role;
-  if (role !== "admin" && role !== "super_admin") {
+  if (role !== "admin") {
     res.status(403).json({ message: "Forbidden: Admin access required" });
     return;
   }
+
 
   next();
 };
@@ -124,10 +125,11 @@ adminRouter.post("/users", requireAuth, requireAdmin, async (req: AuthRequest, r
       googleId: `manual_${Date.now()}`,
       email,
       fullName,
-      role: role || "personal",
+      role: role || "host",
       timezone: timezone || "UTC",
       avatar: avatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(fullName)}`,
     });
+
 
     res.status(201).json(user);
   } catch (error) {

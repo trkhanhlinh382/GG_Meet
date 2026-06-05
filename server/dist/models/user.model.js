@@ -10,8 +10,8 @@ const userSchema = new mongoose_1.Schema({
     timezone: { type: String, default: "UTC" },
     role: {
         type: String,
-        enum: ["personal", "freelancer", "team_member", "host", "manager", "admin", "super_admin"],
-        default: "personal",
+        enum: ["host", "admin"],
+        default: "host",
     },
 }, { timestamps: true });
 exports.UserModel = (0, mongoose_1.model)("User", userSchema);

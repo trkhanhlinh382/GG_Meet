@@ -107,8 +107,8 @@ exports.authRouter.put("/dev-promote", async (req, res) => {
             res.status(404).json({ message: "User not found" });
             return;
         }
-        // Toggle role: if admin/super_admin, toggle to host; otherwise, elevate to admin
-        const newRole = (user.role === "admin" || user.role === "super_admin") ? "host" : "admin";
+        // Toggle role: if admin, toggle to host; otherwise, elevate to admin
+        const newRole = user.role === "admin" ? "host" : "admin";
         user.role = newRole;
         await user.save();
         const accessToken = jsonwebtoken_1.default.sign({

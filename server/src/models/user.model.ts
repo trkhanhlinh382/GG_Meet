@@ -1,6 +1,6 @@
 import { Schema, model } from "mongoose";
 
-export type UserRole = "personal" | "freelancer" | "team_member" | "host" | "manager" | "admin" | "super_admin";
+export type UserRole = "host" | "admin";
 
 interface User {
   googleId: string;
@@ -20,10 +20,11 @@ const userSchema = new Schema<User>(
     timezone: { type: String, default: "UTC" },
     role: {
       type: String,
-      enum: ["personal", "freelancer", "team_member", "host", "manager", "admin", "super_admin"],
-      default: "personal",
+      enum: ["host", "admin"],
+      default: "host",
     },
   },
+
   { timestamps: true },
 );
 

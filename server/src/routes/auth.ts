@@ -130,8 +130,9 @@ authRouter.put("/dev-promote", async (req, res) => {
       return;
     }
 
-    // Toggle role: if admin/super_admin, toggle to host; otherwise, elevate to admin
-    const newRole = (user.role === "admin" || user.role === "super_admin") ? "host" : "admin";
+    // Toggle role: if admin, toggle to host; otherwise, elevate to admin
+    const newRole = user.role === "admin" ? "host" : "admin";
+
     user.role = newRole;
     await user.save();
 

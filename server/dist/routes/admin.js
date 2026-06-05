@@ -7,14 +7,14 @@ const user_model_1 = require("../models/user.model");
 const meeting_model_1 = require("../models/meeting.model");
 const invitation_model_1 = require("../models/invitation.model");
 exports.adminRouter = (0, express_1.Router)();
-// Middleware to verify the user has admin or super_admin role
+// Middleware to verify the user has admin role
 const requireAdmin = (req, res, next) => {
     if (!req.user) {
         res.status(401).json({ message: "Unauthorized" });
         return;
     }
     const role = req.user.role;
-    if (role !== "admin" && role !== "super_admin") {
+    if (role !== "admin") {
         res.status(403).json({ message: "Forbidden: Admin access required" });
         return;
     }
@@ -109,7 +109,7 @@ exports.adminRouter.post("/users", auth_1.requireAuth, requireAdmin, async (req,
             googleId: `manual_${Date.now()}`,
             email,
             fullName,
-            role: role || "personal",
+            role: role || "host",
             timezone: timezone || "UTC",
             avatar: avatar || `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(fullName)}`,
         });

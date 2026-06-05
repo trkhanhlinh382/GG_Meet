@@ -65,12 +65,8 @@ export const AdminLayout = () => {
 
   const getRoleTagColor = (role: string) => {
     switch (role) {
-      case "super_admin":
-        return "purple";
       case "admin":
         return "red";
-      case "manager":
-        return "gold";
       case "host":
         return "blue";
       default:
@@ -80,20 +76,15 @@ export const AdminLayout = () => {
 
   const getRoleLabel = (role: string) => {
     switch (role) {
-      case "super_admin":
-        return "Super Admin";
       case "admin":
-        return "Administrator";
-      case "manager":
-        return "Manager";
+        return "Admin";
       case "host":
-        return "Host";
-      case "personal":
-        return "Personal";
+        return "User (Host)";
       default:
         return role;
     }
   };
+
 
   const renderOverview = () => {
     if (loading && !stats) {
@@ -180,14 +171,11 @@ export const AdminLayout = () => {
                         percent={percent}
                         showInfo={false}
                         strokeColor={
-                          role === "super_admin" || role === "admin"
-                            ? "var(--accent)"
-                            : role === "host"
-                            ? "#8b5cf6"
-                            : "#10b981"
+                          role === "admin" ? "var(--accent)" : "#8b5cf6"
                         }
                         trailColor="rgba(255,255,255,0.05)"
                       />
+
                     </div>
                   );
                 })

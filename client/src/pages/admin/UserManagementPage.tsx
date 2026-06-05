@@ -153,18 +153,10 @@ export const UserManagementPage = () => {
 
   const getRoleTagColor = (role: string) => {
     switch (role) {
-      case "super_admin":
-        return "purple";
       case "admin":
         return "red";
-      case "manager":
-        return "gold";
       case "host":
         return "blue";
-      case "team_member":
-        return "cyan";
-      case "freelancer":
-        return "geekblue";
       default:
         return "default";
     }
@@ -172,24 +164,15 @@ export const UserManagementPage = () => {
 
   const getRoleLabel = (role: string) => {
     switch (role) {
-      case "super_admin":
-        return "Super Admin";
       case "admin":
         return "Admin";
-      case "manager":
-        return "Manager";
       case "host":
-        return "Host";
-      case "team_member":
-        return "Team Member";
-      case "freelancer":
-        return "Freelancer";
-      case "personal":
-        return "Personal";
+        return "User (Host)";
       default:
         return role;
     }
   };
+
 
   const columns = [
     {
@@ -267,14 +250,10 @@ export const UserManagementPage = () => {
   ];
 
   const roleOptions = [
-    { value: "personal", label: "Personal" },
-    { value: "freelancer", label: "Freelancer" },
-    { value: "team_member", label: "Team Member" },
-    { value: "host", label: "Host" },
-    { value: "manager", label: "Manager" },
+    { value: "host", label: "User (Host)" },
     { value: "admin", label: "Admin" },
-    { value: "super_admin", label: "Super Admin" },
   ];
+
 
   return (
     <div className="anim-slide-up">
@@ -369,7 +348,7 @@ export const UserManagementPage = () => {
           <Form.Item
             name="role"
             label={<span style={{ color: "var(--text-secondary)" }}>Vai trò</span>}
-            initialValue="personal"
+            initialValue="host"
             rules={[{ required: true }]}
           >
             <Select options={roleOptions} style={{ borderRadius: 6 }} />
