@@ -3,7 +3,7 @@ import { Alert, Typography, message } from "antd";
 import { http, setAuthToken } from "../api/http";
 
 interface LoginPageProps {
-  onLogin: (token: string, user: { id: string; fullName: string; email: string }) => void;
+  onLogin: (token: string, user: { id: string; fullName: string; email: string; role: string }) => void;
 }
 
 export const LoginPage = ({ onLogin }: LoginPageProps) => {
@@ -22,7 +22,9 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
         id: response.data.user._id,
         fullName: response.data.user.fullName,
         email: response.data.user.email,
+        role: response.data.user.role,
       });
+
       void message.success("Đăng nhập thành công!");
     } catch {
       void message.error("Không thể xác thực. Kiểm tra GOOGLE_CLIENT_ID và API server.");

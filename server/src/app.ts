@@ -11,6 +11,7 @@ import { meetingDetailsRouter } from "./routes/meeting-details";
 import { meetingRouter } from "./routes/meetings";
 import { taskRouter } from "./routes/tasks";
 import { notificationRouter } from "./routes/notifications";
+import { adminRouter } from "./routes/admin";
 
 export const app = express();
 
@@ -36,3 +37,5 @@ app.use("/api/meetings", meetingDetailsRouter);
 app.use("/api/invitations", invitationRouter);
 app.use("/api/tasks", taskRouter);
 app.use("/api/notifications", notificationRouter);
+app.use("/api/admin", adminRouter);
+

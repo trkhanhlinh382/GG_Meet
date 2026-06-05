@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "client-app",
+    "slug": "client-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.trkhanhlinh.ggmeet",
+      "bitcode": false
+    },
+    "android": {
+      "package": "com.trkhanhlinh.ggmeet",
+      "adaptiveIcon": {
+        "backgroundColor": "#111422",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Cho phép GG Meet truy cập camera để thực hiện cuộc gọi video",
+          "microphonePermission": "Cho phép GG Meet truy cập microphone để tham gia hội thoại"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ed082d0a-72f5-4582-9406-9ef6d03a3af0"
+      }
+    }
+  }
+}

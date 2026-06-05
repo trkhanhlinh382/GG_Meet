@@ -2,6 +2,7 @@ import {
   BellOutlined,
   CalendarOutlined,
   ClockCircleOutlined,
+  CrownOutlined,
   LogoutOutlined,
   ScheduleOutlined,
   ThunderboltOutlined,
@@ -17,6 +18,7 @@ import {
   Menu,
   Popover,
   Spin,
+  Tag,
   message,
 } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -42,6 +44,8 @@ import { MeetingsPage } from "./pages/MeetingsPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage.tsx";
 import { MeetingRoomPage } from "./pages/MeetingRoomPage.tsx";
 import { SchedulePage } from "./pages/SchedulePage";
+import { AdminLayout } from "./pages/admin/AdminLayout";
+
 
 const { Header, Content, Sider } = Layout;
 const SIDER_WIDTH = 220;
@@ -52,6 +56,7 @@ interface SessionUser {
   id: string;
   fullName: string;
   email: string;
+  role: string;
 }
 
 interface CreateMeetingInput {
@@ -183,10 +188,16 @@ function App() {
     if (expiresAt && expiresAt <= Date.now()) { clearSession(true); return; }
     setAuthToken(currentToken);
     if (!user && typeof payload?.id === "string" && typeof payload?.fullName === "string" && typeof payload?.email === "string") {
-      const parsedUser = { id: payload.id, fullName: payload.fullName, email: payload.email };
+      const parsedUser = {
+        id: payload.id,
+        fullName: payload.fullName,
+        email: payload.email,
+        role: typeof payload?.role === "string" ? payload.role : "personal",
+      };
       setUser(parsedUser);
       localStorage.setItem("gg_meet_user", JSON.stringify(parsedUser));
     }
+
   }, [clearSession, user]);
 
   // ─── On token change: fetch dashboard + notifications ─────────────────────
@@ -215,9 +226,11 @@ function App() {
 
   const selectedKey = useMemo(() => {
     if (location.pathname.startsWith("/schedule")) return "schedule";
+    if (location.pathname.startsWith("/admin")) return "admin";
     if (location.pathname.startsWith("/meetings") || location.pathname.startsWith("/room") || location.pathname.startsWith("/invitations")) return "meetings";
     return "dashboard";
   }, [location.pathname]);
+
 
   // ─── Auth handlers ─────────────────────────────────────────────────────────
 
@@ -326,6 +339,7 @@ function App() {
                 if (key === "dashboard") { navigate("/dashboard"); return; }
                 if (key === "schedule")  { navigate("/schedule"); return; }
                 if (key === "meetings")  { navigate("/meetings"); return; }
+                if (key === "admin")     { navigate("/admin"); return; }
                 void joinUpcomingMeeting();
               }}
               items={[
@@ -347,7 +361,18 @@ function App() {
                   label: "Cuộc họp",
                   style: { borderRadius: 8, marginBottom: 2 },
                 },
+                ...(user?.role === "admin" || user?.role === "super_admin"
+                  ? [
+                      {
+                        key: "admin",
+                        icon: <CrownOutlined style={{ color: "var(--warning)" }} />,
+                        label: "Quản trị",
+                        style: { borderRadius: 8, marginBottom: 2 },
+                      },
+                    ]
+                  : []),
               ]}
+
             />
           </div>
 
@@ -365,23 +390,70 @@ function App() {
           </div>
 
           {/* User info + logout */}
-          <div className="sidebar-user">
-            <div className="sidebar-user-avatar">
-              {user?.fullName?.charAt(0)?.toUpperCase() ?? "U"}
+          <div className="sidebar-user" style={{ display: "flex", flexDirection: "column", gap: 8, height: "auto", padding: "16px 12px" }}>
+            <div style={{ display: "flex", alignItems: "center", width: "100%", gap: 8 }}>
+              <div className="sidebar-user-avatar">
+                {user?.fullName?.charAt(0)?.toUpperCase() ?? "U"}
+              </div>
+              <div className="sidebar-user-info" style={{ flex: 1, minWidth: 0 }}>
+                <div className="sidebar-user-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user?.fullName ?? "Người dùng"}</div>
+                <div className="sidebar-user-email" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user?.email}</div>
+              </div>
+              <Button
+                type="text"
+                size="small"
+                icon={<LogoutOutlined />}
+                onClick={() => clearSession()}
+                style={{ color: "var(--text-muted)", flexShrink: 0 }}
+                title="Đăng xuất"
+              />
             </div>
-            <div className="sidebar-user-info">
-              <div className="sidebar-user-name">{user?.fullName ?? "Người dùng"}</div>
-              <div className="sidebar-user-email">{user?.email}</div>
-            </div>
-            <Button
-              type="text"
-              size="small"
-              icon={<LogoutOutlined />}
-              onClick={() => clearSession()}
-              style={{ color: "var(--text-muted)", flexShrink: 0 }}
-              title="Đăng xuất"
-            />
+            {user && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", marginTop: 4 }}>
+                <Tag color={
+                  user.role === "admin" || user.role === "super_admin"
+                    ? "red"
+                    : user.role === "host"
+                    ? "blue"
+                    : "default"
+                } style={{ margin: 0, textTransform: "capitalize" }}>
+                  {user.role}
+                </Tag>
+                {import.meta.env.DEV && (
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CrownOutlined style={{ color: user.role === "admin" ? "var(--warning)" : "inherit" }} />}
+                    onClick={async () => {
+                      try {
+                        const response = await http.put("/auth/dev-promote");
+                        const newToken = response.data.accessToken;
+                        const nextUser = {
+                          id: response.data.user._id,
+                          fullName: response.data.user.fullName,
+                          email: response.data.user.email,
+                          role: response.data.user.role,
+                        };
+                        setToken(newToken);
+                        setUser(nextUser);
+                        localStorage.setItem("gg_meet_access_token", newToken);
+                        localStorage.setItem("gg_meet_user", JSON.stringify(nextUser));
+                        http.defaults.headers.common.Authorization = `Bearer ${newToken}`;
+                        void message.success(`Đã chuyển vai trò thành: ${nextUser.role}`);
+                      } catch {
+                        void message.error("Không thể thay đổi vai trò dev.");
+                      }
+                    }}
+                    style={{ fontSize: 11, padding: "0 4px", height: 22, display: "flex", alignItems: "center", gap: 4 }}
+                    title="Dev: Đổi vai trò Admin"
+                  >
+                    Bypass Role
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
+
         </div>
       </Sider>
 
@@ -530,8 +602,10 @@ function App() {
               <Route path="/meetings/:id" element={user ? <MeetingDetailPage token={token} user={user} /> : <Navigate to="/login" replace />} />
               <Route path="/invitations/:id" element={user ? <InvitationDetailPage onJoinMeeting={joinByLink} /> : <Navigate to="/login" replace />} />
               <Route path="/room/:id" element={user ? <RoomPlaceholderRoute setActiveCallRoomId={setActiveCallRoomId} setIsCallMinimized={setIsCallMinimized} /> : <Navigate to="/login" replace />} />
+              <Route path="/admin/*" element={user && (user.role === "admin" || user.role === "super_admin") ? <AdminLayout /> : <Navigate to="/dashboard" replace />} />
               <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
+
           )}
         </Content>
       </Layout>
