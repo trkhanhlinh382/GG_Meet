@@ -141,14 +141,21 @@ export const MeetingRoomScreen = () => {
   const startMeetingFlow = async () => {
     try {
       // 1. Lấy luồng Media cục bộ (Camera + Micro)
-      const stream = await mediaDevices.getUserMedia({
-        audio: true,
-        video: {
-          facingMode: "user",
-        },
-      });
-      localStreamRef.current = stream;
-      setLocalStream(stream);
+      let stream: any = null;
+      try {
+        stream = await mediaDevices.getUserMedia({
+          audio: true,
+          video: {
+            facingMode: "user",
+          },
+        });
+        localStreamRef.current = stream;
+        setLocalStream(stream);
+      } catch (mediaErr) {
+        console.warn("Chạy ở chế độ Mock WebRTC (Expo Go):", mediaErr);
+        // Tạo một mock stream object để tránh crash trên Expo Go
+        setLocalStream({ toURL: () => "" } as any);
+      }
 
       // 2. Kết nối Socket.IO
       const token = await AsyncStorage.getItem("token");
@@ -285,12 +292,13 @@ export const MeetingRoomScreen = () => {
     userId: string,
     name: string,
     initiateOffer: boolean
-  ): Promise<RTCPeerConnection> => {
+  ): Promise<any> => {
     let pc = peersRef.current.get(targetSocketId);
     if (pc) return pc;
 
-    pc = new RTCPeerConnection(rtcConfig);
-    peersRef.current.set(targetSocketId, pc);
+    try {
+      pc = new RTCPeerConnection(rtcConfig);
+      peersRef.current.set(targetSocketId, pc);
 
     // Thêm luồng camera/mic cục bộ vào Peer Connection
     if (localStreamRef.current) {
@@ -337,18 +345,58 @@ export const MeetingRoomScreen = () => {
       }
     };
 
-    if (initiateOffer) {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socketRef.current?.emit("meeting:webrtc-offer", {
-        meetingId,
-        toSocketId: targetSocketId,
-        fromSocketId: socketRef.current.id,
-        offer,
-      });
-    }
+      if (initiateOffer) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socketRef.current?.emit("meeting:webrtc-offer", {
+          meetingId,
+          toSocketId: targetSocketId,
+          fromSocketId: socketRef.current.id,
+          offer,
+        });
+      }
 
-    return pc;
+      return pc;
+    } catch (pcErr) {
+      console.warn("Không thể tạo RTCPeerConnection (Mocking Peer):", pcErr);
+      const mockPc = {
+        close: () => {},
+        setRemoteDescription: async () => {},
+        setLocalDescription: async () => {},
+        createOffer: async () => ({}),
+        createAnswer: async () => ({}),
+        addIceCandidate: async () => {},
+      };
+      peersRef.current.set(targetSocketId, mockPc as any);
+
+      // Thêm ngay vào remoteFeeds dưới dạng tắt cam để hiển thị Avatar
+      setRemoteFeeds((prev) => {
+        const exists = prev.some((f) => f.socketId === targetSocketId);
+        if (exists) return prev;
+        return [
+          ...prev,
+          {
+            socketId: targetSocketId,
+            userId,
+            name,
+            stream: null,
+            micOn: true,
+            cameraOn: true,
+          },
+        ];
+      });
+
+      // Gửi offer trống đến thành viên khác
+      if (initiateOffer) {
+        socketRef.current?.emit("meeting:webrtc-offer", {
+          meetingId,
+          toSocketId: targetSocketId,
+          fromSocketId: socketRef.current?.id,
+          offer: {},
+        });
+      }
+      return mockPc;
+    }
   };
 
   const closePeerConnection = (socketId: string) => {
@@ -498,7 +546,7 @@ export const MeetingRoomScreen = () => {
       {/* Video Grid */}
       <View style={styles.videoGrid}>
         {/* Local Stream (Tọa độ nhỏ góc trên bên phải hoặc grid nếu ít người) */}
-        {localStream && cameraOn ? (
+        {localStream && cameraOn && localStream.toURL() ? (
           <View style={styles.localVideoWrapper}>
             <RTCView
               streamURL={localStream.toURL()}
@@ -512,14 +560,14 @@ export const MeetingRoomScreen = () => {
             <Text style={styles.placeholderAvatar}>
               {(currentUserRef.current?.fullName || "U")[0].toUpperCase()}
             </Text>
-            <Text style={styles.videoName}>Bạn (Tắt Cam)</Text>
+            <Text style={styles.videoName}>Bạn (Tắt Cam / Expo Go)</Text>
           </View>
         )}
 
         {/* Remote Streams */}
         {remoteFeeds.map((feed) => (
           <View key={feed.socketId} style={styles.remoteVideoWrapper}>
-            {feed.stream && feed.cameraOn ? (
+            {feed.stream && feed.cameraOn && feed.stream.toURL() ? (
               <RTCView
                 streamURL={feed.stream.toURL()}
                 objectFit="cover"
