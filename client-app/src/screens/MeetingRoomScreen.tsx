@@ -13,6 +13,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import { useRoute, useNavigation, RouteProp } from "@react-navigation/native";
 import { StackNavigationProp } from "@react-navigation/stack";
@@ -22,9 +23,8 @@ import {
   RTCIceCandidate,
   RTCSessionDescription,
   RTCView,
-  MediaStream,
   mediaDevices,
-} from "react-native-webrtc";
+} from "../utils/webrtc";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { RootStackParamList } from "../../App";
 import { SOCKET_URL, http } from "../api/http";
@@ -36,9 +36,11 @@ interface ParticipantFeed {
   socketId: string;
   userId: string;
   name: string;
-  stream: MediaStream | null;
+  stream: any;
   micOn: boolean;
   cameraOn: boolean;
+  raisedHand?: boolean;
+  sharingScreen?: boolean;
 }
 
 interface ChatMsg {
@@ -61,11 +63,27 @@ export const MeetingRoomScreen = () => {
   const [meetingData, setMeetingData] = useState<any>(null);
 
   // States của cuộc gọi
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<any>(null);
   const [remoteFeeds, setRemoteFeeds] = useState<ParticipantFeed[]>([]);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(true);
   const [isFrontCamera, setIsFrontCamera] = useState(true);
+
+  // --- Mới: Ghim / Focus Video ---
+  const [focusSocketId, setFocusSocketId] = useState<string | null>(null);
+
+  // --- Mới: Giơ tay ---
+  const [raisedHand, setRaisedHand] = useState(false);
+
+  // --- Mới: Chia sẻ màn hình (Giả lập) ---
+  const [sharingScreen, setSharingScreen] = useState(false);
+
+  // --- Mới: Bảng vẽ whiteboard đồng bộ ---
+  const [showWhiteboard, setShowWhiteboard] = useState(false);
+  const [whiteboardPaths, setWhiteboardPaths] = useState<any[]>([]);
+  const [brushColor, setBrushColor] = useState("#000000");
+  const [brushSize, setBrushSize] = useState(3);
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
   // States của Chat
   const [showChat, setShowChat] = useState(false);
@@ -74,8 +92,8 @@ export const MeetingRoomScreen = () => {
 
   // Refs quản lý WebRTC và Socket
   const socketRef = useRef<Socket | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const localStreamRef = useRef<any>(null);
+  const peersRef = useRef<Map<string, any>>(new Map());
   const currentUserRef = useRef<any>(null);
 
   useEffect(() => {
@@ -92,9 +110,6 @@ export const MeetingRoomScreen = () => {
     // 2. Lấy thông tin User hiện tại từ dashboard
     const loadUserInfo = async () => {
       try {
-        const response = await http.get("/dashboard");
-        // Giả sử lấy thông tin user từ danh sách công việc/thông báo hoặc API profile nếu có
-        // Trong trường hợp này, ta có thể lấy tên từ localStorage hoặc dùng email làm định danh
         const token = await AsyncStorage.getItem("token");
         if (token) {
           const base64Url = token.split(".")[1];
@@ -209,6 +224,9 @@ export const MeetingRoomScreen = () => {
       });
 
       socket.on("meeting:participant-left", ({ socketId }) => {
+        if (focusSocketId === socketId) {
+          setFocusSocketId(null);
+        }
         closePeerConnection(socketId);
       });
 
@@ -242,7 +260,7 @@ export const MeetingRoomScreen = () => {
       });
 
       socket.on("meeting:participants-updated", (updatedList: any[]) => {
-        // Đồng bộ trạng thái mic/camera của các thành viên
+        // Đồng bộ trạng thái mic/camera/raisedHand/sharingScreen của các thành viên
         setRemoteFeeds((prevFeeds) =>
           prevFeeds.map((feed) => {
             const match = updatedList.find((u) => u.socketId === feed.socketId);
@@ -251,11 +269,26 @@ export const MeetingRoomScreen = () => {
                 ...feed,
                 micOn: match.micOn,
                 cameraOn: match.cameraOn,
+                raisedHand: match.raisedHand,
+                sharingScreen: match.sharingScreen,
               };
             }
             return feed;
           })
         );
+      });
+
+      // --- Mới: Lắng nghe sự kiện vẽ whiteboard ---
+      socket.on("meeting:draw", (payload: any) => {
+        if (payload.isClear) {
+          setWhiteboardPaths([]);
+        } else {
+          setWhiteboardPaths((prev) => [...prev, payload]);
+        }
+      });
+
+      socket.on("meeting:draw-history", (history: any[]) => {
+        setWhiteboardPaths(history);
       });
 
       socket.on("meeting:chat", (payload: any) => {
@@ -300,50 +333,52 @@ export const MeetingRoomScreen = () => {
       pc = new RTCPeerConnection(rtcConfig);
       peersRef.current.set(targetSocketId, pc);
 
-    // Thêm luồng camera/mic cục bộ vào Peer Connection
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
-        pc?.addTrack(track, localStreamRef.current!);
-      });
-    }
-
-    // Lắng nghe luồng media từ thành viên khác gửi về
-    (pc as any).ontrack = (event: any) => {
-      if (event.streams && event.streams[0]) {
-        const remoteStream = event.streams[0];
-        setRemoteFeeds((prev) => {
-          const exists = prev.some((f) => f.socketId === targetSocketId);
-          if (exists) {
-            return prev.map((f) =>
-              f.socketId === targetSocketId ? { ...f, stream: remoteStream } : f
-            );
-          }
-          return [
-            ...prev,
-            {
-              socketId: targetSocketId,
-              userId,
-              name,
-              stream: remoteStream,
-              micOn: true,
-              cameraOn: true,
-            },
-          ];
+      // Thêm luồng camera/mic cục bộ vào Peer Connection
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track: any) => {
+          pc?.addTrack(track, localStreamRef.current!);
         });
       }
-    };
 
-    // Lắng nghe ICE Candidate
-    (pc as any).onicecandidate = (event: any) => {
-      if (event.candidate) {
-        socketRef.current?.emit("meeting:webrtc-ice", {
-          meetingId,
-          toSocketId: targetSocketId,
-          fromSocketId: socketRef.current.id,
-          candidate: event.candidate,
-        });
-      }
-    };
+      // Lắng nghe luồng media từ thành viên khác gửi về
+      (pc as any).ontrack = (event: any) => {
+        if (event.streams && event.streams[0]) {
+          const remoteStream = event.streams[0];
+          setRemoteFeeds((prev) => {
+            const exists = prev.some((f) => f.socketId === targetSocketId);
+            if (exists) {
+              return prev.map((f) =>
+                f.socketId === targetSocketId ? { ...f, stream: remoteStream } : f
+              );
+            }
+            return [
+              ...prev,
+              {
+                socketId: targetSocketId,
+                userId,
+                name,
+                stream: remoteStream,
+                micOn: true,
+                cameraOn: true,
+                raisedHand: false,
+                sharingScreen: false,
+              },
+            ];
+          });
+        }
+      };
+
+      // Lắng nghe ICE Candidate
+      (pc as any).onicecandidate = (event: any) => {
+        if (event.candidate) {
+          socketRef.current?.emit("meeting:webrtc-ice", {
+            meetingId,
+            toSocketId: targetSocketId,
+            fromSocketId: socketRef.current.id,
+            candidate: event.candidate,
+          });
+        }
+      };
 
       if (initiateOffer) {
         const offer = await pc.createOffer();
@@ -382,11 +417,12 @@ export const MeetingRoomScreen = () => {
             stream: null,
             micOn: true,
             cameraOn: true,
+            raisedHand: false,
+            sharingScreen: false,
           },
         ];
       });
 
-      // Gửi offer trống đến thành viên khác
       if (initiateOffer) {
         socketRef.current?.emit("meeting:webrtc-offer", {
           meetingId,
@@ -413,7 +449,8 @@ export const MeetingRoomScreen = () => {
       meetingId,
       micOn,
       cameraOn,
-      sharingScreen: false,
+      raisedHand,
+      sharingScreen,
     });
   };
 
@@ -421,7 +458,7 @@ export const MeetingRoomScreen = () => {
     const nextState = !micOn;
     setMicOn(nextState);
     if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
+      localStreamRef.current.getAudioTracks().forEach((track: any) => {
         track.enabled = nextState;
       });
     }
@@ -429,6 +466,8 @@ export const MeetingRoomScreen = () => {
       meetingId,
       micOn: nextState,
       cameraOn,
+      raisedHand,
+      sharingScreen,
     });
   };
 
@@ -436,7 +475,7 @@ export const MeetingRoomScreen = () => {
     const nextState = !cameraOn;
     setCameraOn(nextState);
     if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
+      localStreamRef.current.getVideoTracks().forEach((track: any) => {
         track.enabled = nextState;
       });
     }
@@ -444,6 +483,8 @@ export const MeetingRoomScreen = () => {
       meetingId,
       micOn,
       cameraOn: nextState,
+      raisedHand,
+      sharingScreen,
     });
   };
 
@@ -458,6 +499,48 @@ export const MeetingRoomScreen = () => {
     }
   };
 
+  // --- Mới: Giơ tay ---
+  const toggleRaiseHand = () => {
+    const nextState = !raisedHand;
+    setRaisedHand(nextState);
+    socketRef.current?.emit("meeting:participant-state", {
+      meetingId,
+      micOn,
+      cameraOn,
+      raisedHand: nextState,
+      sharingScreen,
+    });
+  };
+
+  // --- Mới: Chia sẻ màn hình (Giả lập) ---
+  const toggleScreenShare = () => {
+    const nextState = !sharingScreen;
+    setSharingScreen(nextState);
+    socketRef.current?.emit("meeting:participant-state", {
+      meetingId,
+      micOn,
+      cameraOn,
+      raisedHand,
+      sharingScreen: nextState,
+      screenStreamId: nextState ? `mock_mobile_screen_${Date.now()}` : null,
+    });
+  };
+
+  // --- Mới: Ghim/Phóng to Video (Focus Mode) ---
+  const toggleFocus = (socketId: string) => {
+    setFocusSocketId((prev) => (prev === socketId ? null : socketId));
+  };
+
+  // --- Mới: Vẽ Whiteboard ---
+  const handleClearWhiteboard = () => {
+    const clearPayload = {
+      meetingId,
+      isClear: true,
+    };
+    setWhiteboardPaths([]);
+    socketRef.current?.emit("meeting:draw", clearPayload);
+  };
+
   const handleSendChat = () => {
     if (!chatText.trim()) return;
     socketRef.current?.emit("meeting:chat", {
@@ -470,19 +553,16 @@ export const MeetingRoomScreen = () => {
   };
 
   const cleanup = () => {
-    // Dừng luồng media cục bộ
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current.getTracks().forEach((track: any) => track.stop());
       localStreamRef.current = null;
     }
     setLocalStream(null);
 
-    // Đóng tất cả Peer Connections
     peersRef.current.forEach((pc) => pc.close());
     peersRef.current.clear();
     setRemoteFeeds([]);
 
-    // Ngắt kết nối socket
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;
@@ -498,7 +578,7 @@ export const MeetingRoomScreen = () => {
     );
   }
 
-  // Giao diện phòng chờ đồng hành
+  // Màn hình phòng chờ đồng hành
   if (isWaiting) {
     return (
       <SafeAreaView style={styles.waitingContainer}>
@@ -541,53 +621,206 @@ export const MeetingRoomScreen = () => {
     );
   }
 
-  return (
-    <SafeAreaView style={styles.roomContainer}>
-      {/* Video Grid */}
-      <View style={styles.videoGrid}>
-        {/* Local Stream (Tọa độ nhỏ góc trên bên phải hoặc grid nếu ít người) */}
-        {localStream && cameraOn && localStream.toURL() ? (
-          <View style={styles.localVideoWrapper}>
+  // --- Render Focused Large View ---
+  const renderFocusedVideo = () => {
+    if (focusSocketId === "local") {
+      return (
+        <View style={styles.focusedVideoInner}>
+          {localStream && cameraOn && localStream.toURL() ? (
+            <RTCView
+              streamURL={localStream.toURL()}
+              objectFit="contain"
+              style={styles.focusedVideoElement}
+              muted={true}
+            />
+          ) : (
+            <View style={[styles.focusedVideoElement, styles.videoPlaceholder]}>
+              <Text style={[styles.placeholderAvatar, { fontSize: 60 }]}>
+                {(currentUserRef.current?.fullName || "U")[0].toUpperCase()}
+              </Text>
+            </View>
+          )}
+          <Text style={styles.videoName}>Bạn (Cá nhân) {sharingScreen ? "🖥️ Đang chia sẻ" : ""}</Text>
+        </View>
+      );
+    }
+
+    const feed = remoteFeeds.find((f) => f.socketId === focusSocketId);
+    if (!feed) return null;
+
+    return (
+      <View style={styles.focusedVideoInner}>
+        {feed.stream && feed.cameraOn && feed.stream.toURL() ? (
+          <RTCView
+            streamURL={feed.stream.toURL()}
+            objectFit="contain"
+            style={styles.focusedVideoElement}
+            muted={false}
+          />
+        ) : (
+          <View style={[styles.focusedVideoElement, styles.videoPlaceholder]}>
+            <Text style={[styles.placeholderAvatar, { fontSize: 60 }]}>
+              {feed.name[0].toUpperCase()}
+            </Text>
+          </View>
+        )}
+        <Text style={styles.videoName}>
+          {feed.name} {!feed.micOn ? "🔇" : ""} {feed.sharingScreen ? "🖥️ Đang chia sẻ" : ""} {feed.raisedHand ? "✋ Giơ tay" : ""}
+        </Text>
+      </View>
+    );
+  };
+
+  // --- Render Small Thumbnails Scroll ---
+  const renderThumbnails = () => {
+    const list = [];
+
+    // Local feed thumbnail
+    if (focusSocketId !== "local") {
+      list.push(
+        <TouchableOpacity
+          key="local"
+          style={styles.thumbVideoWrapper}
+          onPress={() => toggleFocus("local")}
+        >
+          {localStream && cameraOn && localStream.toURL() ? (
             <RTCView
               streamURL={localStream.toURL()}
               objectFit="cover"
-              style={styles.localVideo}
+              style={styles.thumbVideo}
+              muted={true}
             />
-            <Text style={styles.videoName}>Bạn (Cá nhân)</Text>
-          </View>
-        ) : (
-          <View style={[styles.localVideoWrapper, styles.videoPlaceholder]}>
-            <Text style={styles.placeholderAvatar}>
-              {(currentUserRef.current?.fullName || "U")[0].toUpperCase()}
-            </Text>
-            <Text style={styles.videoName}>Bạn (Tắt Cam / Expo Go)</Text>
-          </View>
-        )}
+          ) : (
+            <View style={[styles.thumbVideo, styles.videoPlaceholder]}>
+              <Text style={[styles.placeholderAvatar, { fontSize: 18 }]}>
+                {(currentUserRef.current?.fullName || "U")[0].toUpperCase()}
+              </Text>
+            </View>
+          )}
+          <Text style={styles.thumbVideoName} numberOfLines={1}>Bạn {sharingScreen ? "🖥️" : ""}</Text>
+        </TouchableOpacity>
+      );
+    }
 
-        {/* Remote Streams */}
-        {remoteFeeds.map((feed) => (
-          <View key={feed.socketId} style={styles.remoteVideoWrapper}>
+    // Remote feeds thumbnails
+    remoteFeeds.forEach((feed) => {
+      if (focusSocketId !== feed.socketId) {
+        list.push(
+          <TouchableOpacity
+            key={feed.socketId}
+            style={styles.thumbVideoWrapper}
+            onPress={() => toggleFocus(feed.socketId)}
+          >
             {feed.stream && feed.cameraOn && feed.stream.toURL() ? (
               <RTCView
                 streamURL={feed.stream.toURL()}
                 objectFit="cover"
-                style={styles.remoteVideo}
+                style={styles.thumbVideo}
+                muted={false}
               />
             ) : (
-              <View style={[styles.remoteVideo, styles.videoPlaceholder]}>
-                <Text style={styles.placeholderAvatar}>{feed.name[0].toUpperCase()}</Text>
+              <View style={[styles.thumbVideo, styles.videoPlaceholder]}>
+                <Text style={[styles.placeholderAvatar, { fontSize: 18 }]}>
+                  {feed.name[0].toUpperCase()}
+                </Text>
               </View>
             )}
-            <Text style={styles.videoName}>
-              {feed.name} {!feed.micOn ? "🔇" : ""}
+            <Text style={styles.thumbVideoName} numberOfLines={1}>
+              {feed.name} {feed.raisedHand ? "✋" : ""} {feed.sharingScreen ? "🖥️" : ""}
             </Text>
-          </View>
-        ))}
+          </TouchableOpacity>
+        );
+      }
+    });
 
-        {remoteFeeds.length === 0 && (
-          <View style={styles.aloneContainer}>
-            <Text style={styles.aloneText}>Chưa có thành viên khác tham gia...</Text>
+    return list;
+  };
+
+  return (
+    <SafeAreaView style={styles.roomContainer}>
+      {/* Video Area (Focused or Grid) */}
+      <View style={styles.videoArea}>
+        {focusSocketId ? (
+          // --- GHIM FOCUS VIEW LAYOUT ---
+          <View style={styles.focusContainer}>
+            <TouchableOpacity
+              style={styles.focusedVideoWrapper}
+              onPress={() => setFocusSocketId(null)}
+              activeOpacity={0.9}
+            >
+              {renderFocusedVideo()}
+              <View style={styles.focusBadge}>
+                <Text style={styles.focusBadgeText}>📌 Đang ghim (Bấm để gỡ)</Text>
+              </View>
+            </TouchableOpacity>
+
+            <View style={styles.thumbsScrollContainer}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.thumbsScroll}
+                contentContainerStyle={styles.thumbsContent}
+              >
+                {renderThumbnails()}
+              </ScrollView>
+            </View>
           </View>
+        ) : (
+          // --- GRID VIEW LAYOUT ---
+          <ScrollView contentContainerStyle={styles.gridScroll}>
+            <View style={styles.videoGrid}>
+              {/* Local Stream */}
+              {localStream && cameraOn && localStream.toURL() ? (
+                <TouchableOpacity style={styles.localVideoWrapper} onPress={() => toggleFocus("local")}>
+                  <RTCView
+                    streamURL={localStream.toURL()}
+                    objectFit="cover"
+                    style={styles.localVideo}
+                    muted={true}
+                  />
+                  <Text style={styles.videoName}>Bạn (Cá nhân) {sharingScreen ? "🖥️" : ""}</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={[styles.localVideoWrapper, styles.videoPlaceholder]} onPress={() => toggleFocus("local")}>
+                  <Text style={styles.placeholderAvatar}>
+                    {(currentUserRef.current?.fullName || "U")[0].toUpperCase()}
+                  </Text>
+                  <Text style={styles.videoName}>Bạn (Tắt Cam / Expo Go) {sharingScreen ? "🖥️" : ""}</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Remote Streams */}
+              {remoteFeeds.map((feed) => (
+                <TouchableOpacity
+                  key={feed.socketId}
+                  style={styles.remoteVideoWrapper}
+                  onPress={() => toggleFocus(feed.socketId)}
+                >
+                  {feed.stream && feed.cameraOn && feed.stream.toURL() ? (
+                    <RTCView
+                      streamURL={feed.stream.toURL()}
+                      objectFit="cover"
+                      style={styles.remoteVideo}
+                      muted={false}
+                    />
+                  ) : (
+                    <View style={[styles.remoteVideo, styles.videoPlaceholder]}>
+                      <Text style={styles.placeholderAvatar}>{feed.name[0].toUpperCase()}</Text>
+                    </View>
+                  )}
+                  <Text style={styles.videoName}>
+                    {feed.name} {!feed.micOn ? "🔇" : ""} {feed.raisedHand ? "✋" : ""} {feed.sharingScreen ? "🖥️" : ""}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+
+              {remoteFeeds.length === 0 && (
+                <View style={styles.aloneContainer}>
+                  <Text style={styles.aloneText}>Chưa có thành viên khác tham gia...</Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
         )}
       </View>
 
@@ -611,6 +844,24 @@ export const MeetingRoomScreen = () => {
           <Text style={styles.controlIcon}>🔄</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={[styles.controlBtn, raisedHand && styles.controlBtnActive]}
+          onPress={toggleRaiseHand}
+        >
+          <Text style={styles.controlIcon}>✋</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.controlBtn, sharingScreen && styles.controlBtnActive]}
+          onPress={toggleScreenShare}
+        >
+          <Text style={styles.controlIcon}>🖥️</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.controlBtn} onPress={() => setShowWhiteboard(true)}>
+          <Text style={styles.controlIcon}>🎨</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.controlBtn} onPress={() => setShowChat(true)}>
           <Text style={styles.controlIcon}>💬</Text>
         </TouchableOpacity>
@@ -626,7 +877,122 @@ export const MeetingRoomScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Chat Overlay Modal */}
+      {/* --- MODAL A: COLLABORATIVE WHITEBOARD --- */}
+      <Modal visible={showWhiteboard} animationType="slide" transparent>
+        <SafeAreaView style={styles.whiteboardContainer}>
+          <View style={styles.whiteboardHeader}>
+            <Text style={styles.whiteboardTitle}>Bảng vẽ chung (Whiteboard)</Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <TouchableOpacity style={styles.clearBoardBtn} onPress={handleClearWhiteboard}>
+                <Text style={styles.clearBoardBtnText}>Xóa bảng</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowWhiteboard(false)} style={styles.closeWhiteboardBtn}>
+                <Text style={styles.closeWhiteboardText}>Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Pen Color & Size Toolbar */}
+          <View style={styles.whiteboardToolbar}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ alignItems: "center" }}>
+              {/* Colors */}
+              {["#000000", "#ef4444", "#3b82f6", "#10b981", "#f59e0b"].map((color) => (
+                <TouchableOpacity
+                  key={color}
+                  style={[
+                    styles.colorOption,
+                    { backgroundColor: color },
+                    brushColor === color && styles.colorOptionActive,
+                  ]}
+                  onPress={() => setBrushColor(color)}
+                />
+              ))}
+
+              <View style={styles.toolbarDivider} />
+
+              {/* Sizes */}
+              {([2, 4, 8] as const).map((size) => (
+                <TouchableOpacity
+                  key={size}
+                  style={[styles.sizeOption, brushSize === size && styles.sizeOptionActive]}
+                  onPress={() => setBrushSize(size)}
+                >
+                  <Text style={[styles.sizeOptionText, brushSize === size && styles.sizeOptionTextActive]}>
+                    {size === 2 ? "Mảnh" : size === 4 ? "Vừa" : "Dày"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Collaborative Whiteboard Canvas */}
+          <View
+            style={styles.whiteboardCanvas}
+            onTouchStart={(e) => {
+              const { locationX, locationY } = e.nativeEvent;
+              lastPointRef.current = { x: locationX, y: locationY };
+            }}
+            onTouchMove={(e) => {
+              const { locationX, locationY } = e.nativeEvent;
+              if (lastPointRef.current) {
+                const prev = lastPointRef.current;
+                const newSeg = {
+                  meetingId,
+                  prevX: prev.x,
+                  prevY: prev.y,
+                  x: locationX,
+                  y: locationY,
+                  color: brushColor,
+                  size: brushSize,
+                };
+                
+                // Cập nhật cục bộ để vẽ tức thì mượt mà
+                setWhiteboardPaths((prevPaths) => [...prevPaths, newSeg]);
+                // Gửi sự kiện vẽ lên Socket Server
+                socketRef.current?.emit("meeting:draw", newSeg);
+
+                lastPointRef.current = { x: locationX, y: locationY };
+              }
+            }}
+            onTouchEnd={() => {
+              lastPointRef.current = null;
+            }}
+          >
+            {whiteboardPaths.map((seg, idx) => {
+              const dx = seg.x - seg.prevX;
+              const dy = seg.y - seg.prevY;
+              const length = Math.sqrt(dx * dx + dy * dy);
+              const angle = Math.atan2(dy, dx);
+              const midX = (seg.prevX + seg.x) / 2;
+              const midY = (seg.prevY + seg.y) / 2;
+
+              return (
+                <View
+                  key={idx}
+                  style={{
+                    position: "absolute",
+                    left: midX - length / 2,
+                    top: midY - seg.size / 2,
+                    width: length,
+                    height: seg.size,
+                    backgroundColor: seg.color,
+                    transform: [{ rotate: `${angle}rad` }],
+                    borderRadius: seg.size / 2,
+                  }}
+                />
+              );
+            })}
+
+            {whiteboardPaths.length === 0 && (
+              <View style={styles.emptyWhiteboardContainer}>
+                <Text style={styles.emptyWhiteboardText}>Hãy dùng ngón tay vẽ lên đây...</Text>
+              </View>
+            )}
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* --- MODAL B: CHAT OVERLAY --- */}
       <Modal visible={showChat} animationType="slide" transparent>
         <SafeAreaView style={styles.chatModalContainer}>
           <KeyboardAvoidingView
@@ -786,14 +1152,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#090b0f",
   },
-  videoGrid: {
+  videoArea: {
     flex: 1,
-    padding: 12,
+  },
+  gridScroll: {
+    flexGrow: 1,
+    padding: 16,
+    justifyContent: "center",
+  },
+  videoGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "space-between",
-    alignContent: "flex-start",
-    gap: 12,
+    alignItems: "center",
   },
   localVideoWrapper: {
     width: "48%",
@@ -803,6 +1174,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
   },
   localVideo: {
     width: "100%",
@@ -816,6 +1188,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.06)",
+    marginBottom: 12,
   },
   remoteVideo: {
     width: "100%",
@@ -864,9 +1237,9 @@ const styles = StyleSheet.create({
     borderTopColor: "rgba(255,255,255,0.05)",
   },
   controlBtn: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: "#222538",
     justifyContent: "center",
     alignItems: "center",
@@ -874,14 +1247,17 @@ const styles = StyleSheet.create({
   controlBtnOff: {
     backgroundColor: "#ef4444",
   },
+  controlBtnActive: {
+    backgroundColor: "#6366f1",
+  },
   leaveBtn: {
     backgroundColor: "#dc2626",
-    width: 54,
-    height: 54,
-    borderRadius: 27,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
   },
   controlIcon: {
-    fontSize: 20,
+    fontSize: 18,
     color: "#ffffff",
   },
   chatModalContainer: {
@@ -955,5 +1331,191 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 16,
+  },
+
+  // --- MỚI: GHIM FOCUS MODE STYLING ---
+  focusContainer: {
+    flex: 1,
+    justifyContent: "space-between",
+  },
+  focusedVideoWrapper: {
+    flex: 1,
+    backgroundColor: "#000",
+    position: "relative",
+  },
+  focusedVideoInner: {
+    width: "100%",
+    height: "100%",
+  },
+  focusedVideoElement: {
+    width: "100%",
+    height: "100%",
+  },
+  focusBadge: {
+    position: "absolute",
+    top: 16,
+    left: 16,
+    backgroundColor: "rgba(99, 102, 241, 0.85)",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.15)",
+  },
+  focusBadgeText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  thumbsScrollContainer: {
+    height: 110,
+    backgroundColor: "#131520",
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255,255,255,0.05)",
+  },
+  thumbsScroll: {
+    flex: 1,
+  },
+  thumbsContent: {
+    paddingHorizontal: 12,
+    alignItems: "center",
+    height: "100%",
+  },
+  thumbVideoWrapper: {
+    width: 90,
+    height: 90,
+    borderRadius: 10,
+    overflow: "hidden",
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+    position: "relative",
+    backgroundColor: "#1c1f30",
+  },
+  thumbVideo: {
+    width: "100%",
+    height: "100%",
+  },
+  thumbVideoName: {
+    position: "absolute",
+    bottom: 4,
+    left: 4,
+    right: 4,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    color: "#fff",
+    fontSize: 9,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    textAlign: "center",
+    fontWeight: "600",
+  },
+
+  // --- MỚI: COLLABORATIVE WHITEBOARD MODAL STYLING ---
+  whiteboardContainer: {
+    flex: 1,
+    backgroundColor: "#0f1117",
+  },
+  whiteboardHeader: {
+    height: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#161922",
+  },
+  whiteboardTitle: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  clearBoardBtn: {
+    backgroundColor: "rgba(239, 68, 68, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.3)",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginRight: 10,
+  },
+  clearBoardBtnText: {
+    color: "#ef4444",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  closeWhiteboardBtn: {
+    padding: 6,
+  },
+  closeWhiteboardText: {
+    color: "#6366f1",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  whiteboardToolbar: {
+    height: 50,
+    backgroundColor: "#161922",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255,255,255,0.05)",
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  colorOption: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginRight: 12,
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  colorOptionActive: {
+    borderColor: "#ffffff",
+    transform: [{ scale: 1.1 }],
+  },
+  toolbarDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    marginRight: 16,
+  },
+  sizeOption: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    backgroundColor: "#222538",
+    marginRight: 8,
+  },
+  sizeOptionActive: {
+    backgroundColor: "#6366f1",
+  },
+  sizeOptionText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#94a3b8",
+  },
+  sizeOptionTextActive: {
+    color: "#ffffff",
+  },
+  whiteboardCanvas: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+    position: "relative",
+    overflow: "hidden",
+  },
+  emptyWhiteboardContainer: {
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+  },
+  emptyWhiteboardText: {
+    color: "#cbd5e1",
+    fontSize: 14,
+    fontStyle: "italic",
+    fontWeight: "500",
   },
 });

@@ -20,8 +20,16 @@ const notifications_1 = require("./routes/notifications");
 const admin_1 = require("./routes/admin");
 exports.app = (0, express_1.default)();
 exports.app.use((0, helmet_1.default)());
+const allowedOrigins = [env_1.env.CLIENT_URL, "http://localhost:8081", "http://localhost:19006"];
 exports.app.use((0, cors_1.default)({
-    origin: env_1.env.CLIENT_URL,
+    origin: (origin, callback) => {
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+        const isAllowed = allowedOrigins.includes(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:");
+        callback(null, isAllowed);
+    },
     credentials: true,
 }));
 exports.app.use(express_1.default.json({ limit: "2mb" }));

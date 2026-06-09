@@ -10,9 +10,17 @@ const meetingRealtime_1 = require("./realtime/meetingRealtime");
 const bootstrap = async () => {
     await (0, connect_1.connectDatabase)();
     const httpServer = (0, node_http_1.createServer)(app_1.app);
+    const allowedOrigins = [env_1.env.CLIENT_URL, "http://localhost:8081", "http://localhost:19006"];
     const io = new socket_io_1.Server(httpServer, {
         cors: {
-            origin: env_1.env.CLIENT_URL,
+            origin: (origin, callback) => {
+                if (!origin) {
+                    callback(null, true);
+                    return;
+                }
+                const isAllowed = allowedOrigins.includes(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:");
+                callback(null, isAllowed);
+            },
             credentials: true,
         },
     });

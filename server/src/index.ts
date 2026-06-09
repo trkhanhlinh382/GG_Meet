@@ -10,9 +10,17 @@ const bootstrap = async (): Promise<void> => {
   await connectDatabase();
 
   const httpServer = createServer(app);
+  const allowedOrigins = [env.CLIENT_URL, "http://localhost:8081", "http://localhost:19006"];
   const io = new Server(httpServer, {
     cors: {
-      origin: env.CLIENT_URL,
+      origin: (origin, callback) => {
+        if (!origin) {
+          callback(null, true);
+          return;
+        }
+        const isAllowed = allowedOrigins.includes(origin) || origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:");
+        callback(null, isAllowed);
+      },
       credentials: true,
     },
   });
